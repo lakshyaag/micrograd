@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Network Visualization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        #container {
+            display: flex;
+            width: 100%;
+            height: 100vh;
+        }
+
+        #svg-container {
+            flex: 0 0 1300px;
+            z-index: 10;
+            /* overflow: auto; */
+        }
+
+        #right-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #info-container {
+            /* flex: 1; */
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        #controls-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        #info {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+            line-height: 1.5;
+
+            min-height: 200px;
+            border-radius: 15px;
+        }
+
+        #info .katex {
+            font-size: 1.2em;
+        }
+
+        /*-=-=-=-=-=-=-=-=-=-=-=-=*/
+        /* MLP CSS*/
+        /*-=-=-=-=-=-=-=-=-=-=-=-=*/
+        #network {
+            border: 1px solid #ccc;
+        }
+
+        #layerInput {
+            width: 200px;
+        }
+
+        .layer:hover rect {
+            fill: rgb(190, 190, 190);
+            fill-opacity: 0.1;
+        }
+
+        .latex-label:hover {
+            filter: brightness(0.5);
+        }
+
+        .latex-label.selected {
+            filter: brightness(0.5);
+        }
+
+        .layer.selected>rect {
+            fill: rgb(190, 190, 190);
+            fill-opacity: 0.3;
+        }
+
+        /* Connections */
+        .connection:hover {
+            stroke-width: 3;
+            filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7));
+        }
+
+        .connection.positive {
+            stroke: rgb(100, 100, 255);
+        }
+
+        .connection.negative {
+            stroke: rgb(255, 100, 100);
+        }
+
+        .connection.selected {
+            stroke-width: 3;
+            stroke-opacity: 1;
+        }
+
+        /* Nodes */
+        .node {
+            cursor: pointer;
+        }
+
+        .node:hover {
+            fill: #ffb650;
+        }
+
+        .node.selected {
+            fill: #ffb650;
+        }
+    </style>
+    <!-- for LaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.js"></script>
+    <!-- for anim -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+</head>
+
+<body>
+    <!--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        HTML
+     -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-->
+    <div id="container">
+        <div id="svg-container">
+            <svg id="network" width="1300" height="700"></svg>
+        </div>
+        <div id="right-container">
+            <div id="info-container">
+                <div id="info"></div>
+            </div>
+            <div id="controls-container">
+                <div id="controls">
+                    <input type="text" id="layerInput">
+                    <button onclick="updateNetwork()">New Network</button>
+                </div>
+                <div id="animation-controls">
+                    <h4>note: all explanations in the info box are WIP</h4>
+                    <h4>test animations (done?)</h4>
+                    <button id="btn-shock-weights">Test Shock Weights</button>
+                    <h4>test animations (WIP)</h4>
+                    <button id="btn-forward-pass">Test Forward Pass</button>
+                    <button id="btn-backward-pass">Test Backward Pass</button>
+                    <h4>todo animations</h4>
+                    <button id="btn-concurrent-play">Test Step</button>
+                    <button id="btn-concurrent-play">Test Optimize (free)</button>
+                    <button id="btn-time-locked-play">Test Optimize (time synced)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        Javascript
+     -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-->
+    <script>
+        let selectedElement = null;
+        const svg = document.getElementById('network');
+        const info = document.getElementById('info');
+        const initialLayers = "[2, 10, 10, 3]"
+        let layers = JSON.parse(initialLayers);
+        const svgWidth = 1300;
+        const svgHeight = 700;
+        const LATEX_FONT_SIZE = 16;
+        const LATEX_COLOR = '#999';
+        const LATEX_COLOR_LOSS = '#666';
+        const showConnectionStrengthOpacity = true;
+        const layerColors = {
+            x: {
+                shape: "#ccc",
+                overlay: "rgba(204, 204, 204, 0.1)"
+            },
+            fc: {
+                shape: '#FFFFFF',
+                overlay: "rgba(255, 255, 255, 0.2)" // keep white for now
+            },
+            y: {
+                shape: "#ccc",
+                overlay: "rgba(204, 204, 204, 0.1)"
+            },
+            bias: {
+                shape: "#999",
+            }
+        };
+
+
+        function updateNetwork() {
+            const input = document.getElementById('layerInput').value;
+            try {
+                const newLayers = JSON.parse(input);
+                if (Array.isArray(newLayers) && newLayers.length >= 2 && newLayers.length <= 12 && newLayers.every(n => n <= 10)) {
+                    layers = newLayers;
+                    drawNetwork();
+                } else {
+                    alert('Invalid input. Please use format [n1, n2, ..] with max 12 layers and max 10 nodes per layer.');
+                }
+            } catch (e) {
+                alert('Invalid input. Please use format [n1, n2, ..]');
+            }
+        }
+
+
+        function getLayerColor(layerIndex) {
+            if (layerIndex === 0) return layerColors.x;
+            if (layerIndex === layers.length) return layerColors.y;
+            return layerColors.fc;
+        }
+
+        function randomNormal() {
+            let u = 0, v = 0;
+            while (u === 0) u = Math.random();
+            while (v === 0) v = Math.random();
+            return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+        }
+
+        function initializeGradients() {
+            const connections = document.querySelectorAll('.connection:not([data-to^="' + layers.length + ',"])');
+            connections.forEach(connection => {
+                connection.dataset.gradient = randomNormal().toFixed(4);
+            });
+        }
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Draw the MLP
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function drawNetwork() {
+            svg.innerHTML = '';
+
+            const layerGap = svgWidth / (layers.length + 2);
+
+            layers.forEach((nodeCount, layerIndex) => {
+                const x = (layerIndex + 1) * layerGap;
+                const layerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                layerGroup.classList.add('layer');
+                layerGroup.dataset.layer = layerIndex;
+
+                const layerRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                layerRect.setAttribute('x', x - 15);
+                layerRect.setAttribute('y', 0);
+                layerRect.setAttribute('width', 30);
+                layerRect.setAttribute('height', svgHeight);
+                const layerColor = getLayerColor(layerIndex);
+                layerRect.setAttribute('fill', layerColor.overlay);
+
+                layerGroup.appendChild(layerRect);
+
+                layerGroup.addEventListener('mouseover', showInfo);
+                layerGroup.addEventListener('mouseout', clearInfo);
+                layerGroup.addEventListener('click', showInfo);
+
+                const totalNodes = layerIndex < layers.length - 1 ? nodeCount + 1 : nodeCount;
+
+                for (let i = 0; i < nodeCount; i++) {
+                    const y = (i + 1) * (svgHeight / (totalNodes + 1));
+                    drawNode(x, y, layerIndex, i, layerGroup);
+                }
+
+                // Add bias node for all layers except the last one
+                if (layerIndex < layers.length - 1) {
+                    const biasY = (nodeCount + 1) * (svgHeight / (totalNodes + 1));
+                    drawBiasNode(x, biasY, layerIndex, layerGroup);
+                }
+
+                svg.appendChild(layerGroup);
+
+                if (layerIndex < layers.length - 1) {
+                    drawConnections(layerIndex, x, layerGap);
+                }
+            });
+
+            // Draw the additional "y" layer
+            const yLayerX = (layers.length + 1) * layerGap;
+            const yLayerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            yLayerGroup.classList.add('layer');
+            yLayerGroup.dataset.layer = layers.length;
+
+            const yLayerRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            yLayerRect.setAttribute('x', yLayerX - 15);
+            yLayerRect.setAttribute('y', 0);
+            yLayerRect.setAttribute('width', 30);
+            yLayerRect.setAttribute('height', svgHeight);
+            yLayerRect.setAttribute('fill', layerColors.y.overlay);
+
+            yLayerGroup.appendChild(yLayerRect);
+
+            yLayerGroup.addEventListener('mouseover', showInfo);
+            yLayerGroup.addEventListener('mouseout', clearInfo);
+            yLayerGroup.addEventListener('click', showInfo);
+
+            const lastLayerNodeCount = layers[layers.length - 1];
+            for (let i = 0; i < lastLayerNodeCount; i++) {
+                const y = (i + 1) * (svgHeight / (lastLayerNodeCount + 1));
+                drawNode(yLayerX, y, layers.length, i, yLayerGroup);
+            }
+
+            svg.appendChild(yLayerGroup);
+
+            // Draw connections between y_hat and y
+            drawYConnections(layers.length - 1, (layers.length) * layerGap, layerGap);
+
+            // Draw the curly brace and "loss" text
+            const lastLayerX = (layers.length + 1) * layerGap;
+            const braceWidth = 15;
+            const topNodeY = (1) * (svgHeight / (lastLayerNodeCount + 1));
+            const bottomNodeY = (lastLayerNodeCount) * (svgHeight / (lastLayerNodeCount + 1));
+            const braceHeight = bottomNodeY - topNodeY;
+            const braceX = lastLayerX + 30;
+            const braceY = topNodeY;
+
+            const brace = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            brace.setAttribute('d', `M ${braceX} ${braceY}
+                         C ${braceX} ${braceY + braceHeight * 0.05}, ${braceX + braceWidth * 0.6} ${braceY + braceHeight * 0.1}, ${braceX + braceWidth * 0.8} ${braceY + braceHeight * 0.2}
+                         C ${braceX + braceWidth} ${braceY + braceHeight * 0.3}, ${braceX + braceWidth} ${braceY + braceHeight * 0.4}, ${braceX + braceWidth} ${braceY + braceHeight * 0.45}
+                         L ${braceX + braceWidth * 1.5} ${braceY + braceHeight * 0.5}
+                         L ${braceX + braceWidth} ${braceY + braceHeight * 0.55}
+                         C ${braceX + braceWidth} ${braceY + braceHeight * 0.6}, ${braceX + braceWidth} ${braceY + braceHeight * 0.7}, ${braceX + braceWidth * 0.8} ${braceY + braceHeight * 0.8}
+                         C ${braceX + braceWidth * 0.6} ${braceY + braceHeight * 0.9}, ${braceX} ${braceY + braceHeight * 0.95}, ${braceX} ${braceY + braceHeight}`);
+            brace.setAttribute('fill', 'none');
+            brace.setAttribute('stroke', '#ccc');
+            brace.setAttribute('stroke-width', '2');
+            svg.appendChild(brace);
+
+            addLayerLabels();
+            addLossLabel();
+        }
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Draw nodes
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function drawNode(x, y, layerIndex, nodeIndex, parent, isBiasNode = false) {
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            const shapeColor = isBiasNode ? layerColors.bias.shape : getLayerColor(layerIndex).shape
+            circle.setAttribute('cx', x);
+            circle.setAttribute('cy', y);
+            circle.setAttribute('r', isBiasNode ? 5 : 10);
+            circle.setAttribute('fill', shapeColor);
+            circle.setAttribute('stroke', 'gray');
+            circle.setAttribute('stroke-width', '1');
+            circle.classList.add('node');
+            circle.dataset.layer = layerIndex;
+            circle.dataset.node = nodeIndex;
+            parent.appendChild(circle);
+
+            circle.addEventListener('mouseover', showInfo);
+            circle.addEventListener('mouseout', clearInfo);
+            circle.addEventListener('click', showInfo);
+            circle.addEventListener('mouseenter', handleNodeHover);
+            circle.addEventListener('mouseleave', resetNodeHover);
+        }
+
+        function drawBiasNode(x, y, layerIndex, parent) {
+            drawNode(x, y, layerIndex, layers[layerIndex], parent, true);
+        }
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Draw connections
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function drawConnections(layerIndex, x, layerGap) {
+            const currentLayer = layers[layerIndex];
+            const nextLayer = layers[layerIndex + 1];
+            const connectionStrengths = [];
+
+            // Generate connection strengths
+            for (let i = 0; i < (currentLayer + 1) * nextLayer; i++) {
+                connectionStrengths.push(randomNormal());
+            }
+
+            const maxStrength = Math.max(...connectionStrengths.map(Math.abs));
+
+            let connectionIndex = 0;
+            for (let i = 0; i <= currentLayer; i++) {
+                const fromY = (i + 1) * (svgHeight / (currentLayer + 2));
+                for (let j = 0; j < nextLayer; j++) {
+                    // Adjust toY calculation based on whether it's the last layer or not
+                    const toY = (layerIndex === layers.length - 2)
+                        ? (j + 1) * (svgHeight / (nextLayer + 1))  // Last layer (y_hat)
+                        : (j + 1) * (svgHeight / (nextLayer + 2)); // Other layers
+
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    line.setAttribute('x1', x);
+                    line.setAttribute('y1', fromY);
+                    line.setAttribute('x2', x + layerGap);
+                    line.setAttribute('y2', toY);
+                    line.setAttribute('stroke', '#999');
+                    line.setAttribute('stroke-width', '1');
+
+                    const strength = connectionStrengths[connectionIndex];
+                    line.setAttribute('stroke-opacity', showConnectionStrengthOpacity ? Math.abs(strength) / maxStrength : 1);
+
+                    line.classList.add('connection');
+                    line.dataset.from = `${layerIndex},${i}`;
+                    line.dataset.to = `${layerIndex + 1},${j}`;
+                    line.dataset.strength = strength.toFixed(4);
+                    line.dataset.maxStrength = maxStrength.toFixed(4);
+                    svg.appendChild(line);
+
+                    line.addEventListener('mouseover', (event) => {
+                        showInfo(event);
+                    });
+                    line.addEventListener('mouseout', (event) => {
+                        clearInfo(event);
+                        resetConnectionAppearance(event);
+                    });
+
+                    line.addEventListener('click', (event) => {
+                        // line.setAttribute('stroke-opacity', 1);
+                        showInfo(event);
+                    });
+
+                    connectionIndex++;
+                }
+            }
+
+            initializeGradients();
+        }
+
+
+        function drawYConnections(layerIndex, x, layerGap) {
+            const currentLayer = layers[layerIndex];
+
+            for (let i = 0; i < currentLayer; i++) {
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', x);
+                line.setAttribute('y1', (i + 1) * (svgHeight / (currentLayer + 1)));
+                line.setAttribute('x2', x + layerGap);
+                line.setAttribute('y2', (i + 1) * (svgHeight / (currentLayer + 1)));
+                line.setAttribute('stroke', '#999');
+                line.setAttribute('stroke-width', '1');
+                line.setAttribute('stroke-dasharray', '5,5');
+
+                line.classList.add('connection');
+                line.dataset.from = `${layerIndex},${i}`;
+                line.dataset.to = `${layerIndex + 1},${i}`;
+                svg.appendChild(line);
+
+                line.addEventListener('mouseover', showInfo);
+                line.addEventListener('mouseout', clearInfo);
+                line.addEventListener('click', showInfo);
+            }
+        }
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Display detailed info top-right
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function showInfo(event) {
+            const target = event.target;
+            let content = '';
+
+            if (target.classList.contains('node')) {
+                const layerIndex = parseInt(target.dataset.layer);
+                const nodeIndex = parseInt(target.dataset.node) + 1;
+                if (nodeIndex === layers[layerIndex] + 1) {
+                    content = `Bias node (the vector $$\\mathbf{1}$$) for layer $$${layerIndex + 1}$$`;
+                } else if (layerIndex === 0) {
+                    content = `Input feature $$${nodeIndex}$$`;
+                } else if (layerIndex === layers.length - 1) {
+                    content = `Output feature $$${nodeIndex}$$ for $$\\hat{y}$$`;
+                } else if (layerIndex === layers.length) {
+                    content = `Output feature $$${nodeIndex}$$ for $$y$$`;
+                } else {
+                    content = `Node in fully connected layer ${layerIndex}, index ${nodeIndex}`;
+                }
+            } else if (target.classList.contains('connection')) {
+                const [fromLayer, fromNode] = target.dataset.from.split(',');
+                const [toLayer, toNode] = target.dataset.to.split(',');
+                const fromLayerIndex = parseInt(fromLayer) + 1;
+                const toLayerIndex = parseInt(toLayer) + 1;
+                const fromNodeIndex = parseInt(fromNode) + 1;
+                const toNodeIndex = parseInt(toNode) + 1;
+
+
+                if (fromLayerIndex === layers.length && toLayerIndex === layers.length + 1) {
+                    content = `Compare $$\\hat{y}$$ and $$y$$ at feature index ${fromNodeIndex}`;
+                } else {
+                    const strength = parseFloat(target.dataset.strength);
+                    const gradient = parseFloat(target.dataset.gradient);
+                    const absGradient = Math.abs(gradient);
+                    const maxGradient = 1; // Adjust this value based on your gradient range
+
+                    let color;
+                    if (gradient >= 0) {
+                        color = `rgba(0, 0, 255, ${absGradient / maxGradient})`;
+                    } else {
+                        color = `rgba(255, 0, 0, ${absGradient / maxGradient})`;
+                    }
+
+                    target.style.filter = `drop-shadow(0 0 3px ${color})`;
+                    if (strength >= 0) {
+                        target.classList.add('positive');
+                        target.classList.remove('negative');
+                    } else {
+                        target.classList.add('negative');
+                        target.classList.remove('positive');
+                    }
+                    if (fromNodeIndex === layers[fromLayerIndex - 1] + 1) {
+                        content = `Bias term for node $$${toNodeIndex}$$ in layer $$${toLayerIndex}$$.\n\nStrength: $$${strength.toFixed(4)}$$`;
+                    } else {
+                        content = `Connection from node $$${fromNodeIndex}$$ in layer $$${fromLayerIndex}$$ to node $$${toNodeIndex}$$ in layer $$${toLayerIndex}$$.\n\nStrength: $$${strength.toFixed(4)}$$`;
+                    }
+                    content += ` Gradient: ${gradient.toFixed(4)}`;
+
+                }
+            }
+            // else if (target.closest('.layer')) {
+            else if (target.classList.contains('layer') || target.parentElement.classList.contains('layer')) {
+                const layer = target.classList.contains('layer') ? target : target.parentElement;
+                const layerIndex = parseInt(layer.dataset.layer);
+                if (layerIndex === 0) {
+                    content = `Input layer, containing ${layers[layerIndex]} features`;
+                } else if (layerIndex === layers.length - 1) {
+                    content = `Output layer $$\\hat{y}$$, containing ${layers[layerIndex]} features`;
+                } else if (layerIndex === layers.length) {
+                    content = `True values $$y$$, containing ${layers[layers.length - 1]} features`;
+                } else {
+                    content = `Fully connected layer ${layerIndex}, containing ${layers[layerIndex]} nodes`;
+                }
+            } else if (target.closest('.latex-label')) {
+                const latexLabel = target.closest('.latex-label');
+                content = `LaTeX formula: $$${latexLabel.dataset.latex}$$`;
+            }
+
+            const infoElement = document.getElementById('info');
+
+            if (event.type === 'click') {
+                if (target.classList.contains('node') ||
+                    target.classList.contains('connection') ||
+                    target.closest('.layer') ||
+                    target.closest('.latex-label')) {
+
+                    if (selectedElement) {
+                        selectedElement.classList.remove('selected');
+                    }
+                    target.classList.add('selected');
+                    selectedElement = target;
+                    renderInfoContent(infoElement, content);
+                } else {
+                    // Clicking a non-displayable element
+                    if (selectedElement) {
+                        selectedElement.classList.remove('selected');
+                    }
+                    selectedElement = null;
+                    infoElement.textContent = '';
+                }
+            } else if ((event.type === 'mouseover' && !selectedElement) || event.target == selectedElement) {
+                // Only update info on mouseover if there's no selected element
+                // or this event target is the selected element
+                renderInfoContent(infoElement, content);
+            }
+        }
+
+        function clearInfo(event) {
+            if (event.type === 'mouseout' && !selectedElement) {
+                document.getElementById('info').textContent = '';
+            }
+        }
+
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Create figure labels
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function createLatexLabel(x, y, text, color) {
+            const foreignObject = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+            foreignObject.setAttribute('x', x - 75);
+            foreignObject.setAttribute('y', y - 20);
+            foreignObject.setAttribute('width', '150');
+            foreignObject.setAttribute('height', '40');
+            foreignObject.classList.add('latex-label');
+            foreignObject.dataset.latex = text;
+
+            const div = document.createElement('div');
+            div.style.fontSize = LATEX_FONT_SIZE + 'px';
+            div.style.color = color;
+            div.style.display = 'flex';
+            div.style.justifyContent = 'center';
+            div.style.alignItems = 'center';
+            div.style.height = '100%';
+
+            katex.render(text, div, {
+                throwOnError: false
+            });
+
+            foreignObject.appendChild(div);
+            foreignObject.addEventListener('mouseover', showInfo);
+            foreignObject.addEventListener('mouseout', clearInfo);
+            foreignObject.addEventListener('click', showInfo);
+
+            return foreignObject;
+        }
+
+
+        function addLayerLabels() {
+            const layerGap = svgWidth / (layers.length + 2);
+
+            // Input layer label
+            svg.appendChild(createLatexLabel(layerGap, svgHeight - 20, '\\mathbf{x}', LATEX_COLOR));
+            // Hidden layer labels
+            for (let i = 1; i < layers.length - 1; i++) {
+                svg.appendChild(createLatexLabel((i + 1) * layerGap, svgHeight - 20, `\\mathbf{x}:=\\phi(\\mathbf{W}_{${i}}\\mathbf{x})`, LATEX_COLOR));
+            }
+            // Output layer label
+            svg.appendChild(createLatexLabel(layers.length * layerGap, svgHeight - 20, `\\hat{\\mathbf{y}} := \\mathbf{W}_{${layers.length - 1}}\\mathbf{x}`, LATEX_COLOR));
+            // True values label
+            svg.appendChild(createLatexLabel((layers.length + 1) * layerGap, svgHeight - 20, '\\mathbf{y}', LATEX_COLOR));
+            // Weight labels
+            for (let i = 1; i < layers.length; i++) {
+                svg.appendChild(createLatexLabel(i * layerGap + layerGap / 2, 20, `\\mathbf{W}_{${i}}`, LATEX_COLOR));
+            }
+        }
+
+
+        function addLossLabel() {
+            const lastLayerX = (layers.length + 1) * (svgWidth / (layers.length + 2));
+            const braceWidth = 15;
+            svg.appendChild(createLatexLabel(lastLayerX + braceWidth * 1.5 + 80, svgHeight / 2, 'L(\\hat{\\mathbf{y}}, \\mathbf{y})', LATEX_COLOR_LOSS));
+        }
+
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Rendering events and helpers
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function renderInfoContent(element, content) {
+            const regex = /\$\$(.*?)\$\$/g;
+            const parts = content.split(regex);
+
+            element.innerHTML = '';
+            parts.forEach((part, index) => {
+                if (index % 2 === 0) {
+                    // Plain text
+                    const lines = part.split('\n');
+                    lines.forEach((line, lineIndex) => {
+                        element.appendChild(document.createTextNode(line));
+                        if (lineIndex < lines.length - 1) {
+                            element.appendChild(document.createElement('br'));
+                        }
+                    });
+                } else {
+                    // LaTeX
+                    const span = document.createElement('span');
+                    katex.render(part, span, {
+                        throwOnError: false,
+                        displayMode: false
+                    });
+                    element.appendChild(span);
+                }
+            });
+        }
+
+        function handleNodeHover(event) {
+            const target = event.target;
+            if (target.classList.contains('node')) {
+                const layerIndex = parseInt(target.dataset.layer);
+                const nodeIndex = parseInt(target.dataset.node);
+
+                function highlightConnection(conn) {
+                    conn.classList.add('highlighted');
+                    conn.setAttribute('stroke-width', '3');
+
+                    const strength = parseFloat(conn.dataset.strength);
+                    const gradient = parseFloat(conn.dataset.gradient);
+                    const absGradient = Math.abs(gradient);
+                    const maxGradient = 1; // Adjust this value based on your gradient range
+
+                    let color;
+                    if (gradient >= 0) {
+                        color = `rgba(0, 0, 255, ${absGradient / maxGradient})`;
+                    } else {
+                        color = `rgba(255, 0, 0, ${absGradient / maxGradient})`;
+                    }
+
+                    // conn.style.filter = `drop-shadow(0 0 3px ${color})`;
+                    if (strength >= 0) {
+                        conn.classList.add('positive');
+                        conn.classList.remove('negative');
+                    } else {
+                        conn.classList.add('negative');
+                        conn.classList.remove('positive');
+                    }
+                }
+
+                // Highlight incoming connections
+                if (layerIndex > 0) {
+                    const incomingConnections = document.querySelectorAll(`.connection[data-to="${layerIndex},${nodeIndex}"]`);
+                    incomingConnections.forEach(highlightConnection);
+                }
+
+                // Highlight outgoing connections
+                if (layerIndex < layers.length - 1) {
+                    const outgoingConnections = document.querySelectorAll(`.connection[data-from="${layerIndex},${nodeIndex}"]`);
+                    outgoingConnections.forEach(highlightConnection);
+                }
+            }
+        }
+
+
+        function resetNodeHover() {
+            // if (selectedElement) return; // Don't reset if there's a selected element
+            const highlightedConnections = document.querySelectorAll('.connection.highlighted');
+            highlightedConnections.forEach(conn => {
+                conn.classList.remove('highlighted', 'positive', 'negative');
+                conn.setAttribute('stroke-width', '1');
+                conn.style.filter = '';
+            });
+        }
+
+
+        function resetConnectionAppearance(event) {
+            const target = event.target;
+
+            if (target.classList.contains('connection')) {
+                target.style.filter = '';
+                target.classList.remove('highlighted', 'positive', 'negative');
+            }
+        }
+
+
+        function updateConnectionOpacity() {
+            const connections = document.querySelectorAll('.connection');
+            connections.forEach(connection => {
+                if (showConnectionStrengthOpacity) {
+                    const strength = parseFloat(connection.dataset.strength);
+                    const maxStrength = parseFloat(connection.dataset.maxStrength);
+                    const opacity = strength / maxStrength;
+                    connection.setAttribute('stroke-opacity', opacity);
+                } else {
+                    connection.setAttribute('stroke-opacity', 1);
+                }
+            });
+        }
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Animations
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // TODO after micrograd implemented: nodes act as accumulators and change color and intensity based
+        // on weighted input and activation function
+        function animateForwardPass() {
+            const stepDurationMs = 500;
+
+            const animationLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            svg.appendChild(animationLayer);
+
+            function isYNode(layerIndex) {
+                return layerIndex === layers.length;
+            }
+
+            function animateLayer(layerIndex) {
+                if (layerIndex > layers.length) {
+                    svg.removeChild(animationLayer);
+                    return;
+                }
+
+                const nodes = document.querySelectorAll(`.node[data-layer="${layerIndex}"]`);
+                nodes.forEach(node => {
+                    const animatedNode = node.cloneNode(true);
+                    if (isYNode(layerIndex)) {
+                        animatedNode.setAttribute('r', '7');  // Smaller radius
+                        animatedNode.setAttribute('fill', '#666');  // dark navy blue color
+                    } else {
+                        animatedNode.setAttribute('r', '15');
+                        animatedNode.setAttribute('fill', '#ffb650');
+                    }
+                    animatedNode.setAttribute('fill-opacity', '0');
+                    animationLayer.appendChild(animatedNode);
+
+                    anime({
+                        targets: animatedNode,
+                        fillOpacity: 0.7,
+                        duration: stepDurationMs,
+                        easing: 'easeInOutQuad'
+                    });
+                });
+
+                if (layerIndex < layers.length) {
+                    const connections = document.querySelectorAll(`.connection[data-from^="${layerIndex},"]`);
+                    connections.forEach(conn => {
+                        const strength = parseFloat(conn.dataset.strength);
+                        const absStrength = Math.abs(strength);
+                        const maxStrength = parseFloat(conn.dataset.maxStrength);
+                        const opacity = absStrength / maxStrength;
+                        const color = strength >= 0 ? 'rgb(100, 100, 255)' : 'rgb(255, 100, 100)';
+
+                        const animatedConn = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        animatedConn.setAttribute('x1', conn.getAttribute('x1'));
+                        animatedConn.setAttribute('y1', conn.getAttribute('y1'));
+                        animatedConn.setAttribute('x2', conn.getAttribute('x1'));
+                        animatedConn.setAttribute('y2', conn.getAttribute('y1'));
+                        animatedConn.setAttribute('stroke', color);
+                        animatedConn.setAttribute('stroke-opacity', opacity);
+                        animatedConn.setAttribute('stroke-width', '3');
+
+                        // Add dashed line for connection between y_hat and y
+                        if (layerIndex === layers.length - 1) {
+                            animatedConn.setAttribute('stroke-dasharray', '5,5');
+                        }
+
+                        animationLayer.appendChild(animatedConn);
+
+                        anime({
+                            targets: animatedConn,
+                            x2: conn.getAttribute('x2'),
+                            y2: conn.getAttribute('y2'),
+                            duration: stepDurationMs,
+                            easing: 'easeInOutQuad'
+                        });
+                    });
+                }
+
+                setTimeout(() => animateLayer(layerIndex + 1), stepDurationMs);
+            }
+
+            animateLayer(0);
+        }
+
+
+        function animateBackwardPass() {
+            const stepDurationMs = 500;
+
+            const animationLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            svg.appendChild(animationLayer);
+
+            let maxGradient = 0;
+            document.querySelectorAll('.connection').forEach(conn => {
+                const gradient = Math.abs(parseFloat(conn.dataset.gradient));
+                if (gradient > maxGradient) maxGradient = gradient;
+            });
+
+            function isTerminalNode(layerIndex, nodeIndex) {
+                // X nodes (input layer)
+                if (layerIndex === 0) return true;
+
+                // Bias nodes (last node in each layer except the output layer)
+                if (layerIndex < layers.length - 1 && nodeIndex === layers[layerIndex]) return true;
+
+                return false;
+            }
+
+            function animateLayer(layerIndex) {
+                if (layerIndex < 0) {
+                    svg.removeChild(animationLayer);
+                    return;
+                }
+
+                const nodes = document.querySelectorAll(`.node[data-layer="${layerIndex}"]`);
+                nodes.forEach((node, nodeIndex) => {
+                    const animatedNode = node.cloneNode(true);
+                    if (isTerminalNode(layerIndex, nodeIndex)) {
+                        animatedNode.setAttribute('r', '7');  // Smaller radius
+                        animatedNode.setAttribute('fill', '#666');  // dark navy blue color
+                    } else {
+                        animatedNode.setAttribute('r', '15');
+                        animatedNode.setAttribute('fill', '#ffb650');
+                    }
+                    animatedNode.setAttribute('fill-opacity', '0');
+                    animationLayer.appendChild(animatedNode);
+
+                    anime({
+                        targets: animatedNode,
+                        fillOpacity: 0.7,
+                        duration: stepDurationMs,
+                        easing: 'easeInOutQuad'
+                    });
+                });
+
+                if (layerIndex > 0) {
+                    const connections = document.querySelectorAll(`.connection[data-to^="${layerIndex},"]`);
+                    connections.forEach(conn => {
+                        const gradient = parseFloat(conn.dataset.gradient);
+                        const absGradient = Math.abs(gradient);
+                        const opacity = absGradient / maxGradient;
+                        const color = gradient >= 0 ? 'rgb(100, 100, 255)' : 'rgb(255, 100, 100)';
+
+                        const animatedConn = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        animatedConn.setAttribute('x1', conn.getAttribute('x2'));
+                        animatedConn.setAttribute('y1', conn.getAttribute('y2'));
+                        animatedConn.setAttribute('x2', conn.getAttribute('x2'));
+                        animatedConn.setAttribute('y2', conn.getAttribute('y2'));
+                        animatedConn.setAttribute('stroke', color);
+                        animatedConn.setAttribute('stroke-opacity', opacity);
+                        animatedConn.setAttribute('stroke-width', '3');
+
+                        // Add dashed line for connection between y and y_hat
+                        if (layerIndex === layers.length) {
+                            animatedConn.setAttribute('stroke-dasharray', '5,5');
+                        }
+
+                        animationLayer.appendChild(animatedConn);
+
+                        anime({
+                            targets: animatedConn,
+                            x2: conn.getAttribute('x1'),
+                            y2: conn.getAttribute('y1'),
+                            duration: stepDurationMs,
+                            easing: 'easeInOutQuad'
+                        });
+                    });
+                }
+
+                setTimeout(() => animateLayer(layerIndex - 1), stepDurationMs);
+            }
+
+            animateLayer(layers.length);
+        }
+
+
+
+        function concurrentPlay() { /* ... */ }
+        function timeLockedPlay() { /* ... */ }
+
+
+        function shockWeights() {
+            const connections = document.querySelectorAll('.connection:not([data-to^="' + layers.length + ',"])');
+            let maxStrength = 0;
+
+            // First pass: update strengths and find max
+            connections.forEach(connection => {
+                const strength = parseFloat(connection.dataset.strength);
+                const jitterStr = 0.7;
+                const jitter = (Math.random() - 0.5) * jitterStr; // Small random value
+                const newStrength = strength + jitter;
+
+                // Update the connection's dataset with the new strength
+                connection.dataset.strength = newStrength.toFixed(4);
+
+                // Update max strength
+                maxStrength = Math.max(maxStrength, Math.abs(newStrength));
+            });
+
+            // Second pass: update opacities and animate
+            connections.forEach(connection => {
+                const newStrength = parseFloat(connection.dataset.strength);
+
+                // Calculate new opacity
+                const opacity = Math.abs(newStrength) / maxStrength;
+
+                // Animate jitter effect and opacity change
+                connection.animate([
+                    { transform: 'translateY(0px)' },
+                    { transform: 'translateY(-5px)' },
+                    { transform: 'translateY(5px)' },
+                    { transform: 'translateY(0px)' }
+                ], {
+                    duration: 200,
+                    iterations: 1,
+                    fill: 'forwards'
+                });
+
+                // Update the stroke-opacity attribute after animation
+                setTimeout(() => {
+                    connection.setAttribute('stroke-opacity', opacity);
+                }, 200);
+
+                // Update the max strength for this connection
+                connection.dataset.maxStrength = maxStrength.toFixed(4);
+            });
+
+            // // Update the info display for the currently selected element (if it's a connection)
+            if (selectedElement && selectedElement.classList.contains('connection')) {
+                showInfo({ target: selectedElement });
+            }
+        }
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Add event listeners and draw
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        svg.addEventListener('click', function (event) {
+            showInfo(event);
+        });
+
+        function addEventListeners(element) {
+            element.addEventListener('mouseover', showInfo);
+            element.addEventListener('mouseout', clearInfo);
+            element.addEventListener('click', showInfo);
+        }
+
+        document.querySelectorAll('.node, .connection, .layer, .latex-label').forEach(addEventListeners);
+
+        document.getElementById('btn-forward-pass').addEventListener('click', animateForwardPass);
+        document.getElementById('btn-backward-pass').addEventListener('click', animateBackwardPass);
+        document.getElementById('btn-concurrent-play').addEventListener('click', concurrentPlay);
+        document.getElementById('btn-time-locked-play').addEventListener('click', timeLockedPlay);
+        document.getElementById('btn-shock-weights').addEventListener('click', shockWeights);
+
+        drawNetwork();
+        window.onload = function () {
+            document.getElementById('layerInput').value = initialLayers;
+        };
+
+    </script>
+</body>
+
+</html>
+<!-- WIP -->
+<!-- Author: Arno Khachatourian, arno.kha@gmail.com -->
