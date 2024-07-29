@@ -694,39 +694,37 @@
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         let currentTrainingStage = 0; // 0: forward, 1: backward, 2: update
 
+        function resetCurrentTrainingStage() {
+            // in case we are partway through a cycle, reset stage and grad
+            currentTrainingStage = 0;
+            mlp.zeroGrad();
+            updateButtonState(btnFwdBackUp, currentTrainingStage);
+        }
 
-        function trainModelStep(stage, fullStep = false) {
-            if (!mlp) {
-                console.error("MLP not initialized");
-                return;
+        function trainForward() {
+            // forward pass
+            if (epoch % 10 === 0) {
+                const val_loss = evalSplit(mlp, val_split);
+                updateTrainingDisplay(epoch, null, val_loss);
             }
 
-            if (fullStep) {
-                // in case we are partway through a cycle, reset stage and grad
-                currentTrainingStage = 0;
-                mlp.zeroGrad();
-                updateButtonState(btnFwdBackUp, currentTrainingStage);
+            loss = new Value(0);
+            for (const [x, y] of train_split) {
+                const logits = mlp.call([new Value(x[0]), new Value(x[1])]);
+                loss = loss.add(crossEntropy(logits, y));
+            }
+            loss = loss.mul(1.0 / train_split.length);
+            updateTrainingDisplay(epoch, loss.data, null);
+        }
 
+        function trainBackward() {
+            // backward pass (deposit the gradients)
+            loss.backward();
+        }
 
-                // evaluate the validation split every few steps
-                if (epoch % 10 === 0) {
-                    const val_loss = evalSplit(mlp, val_split);
-                    updateTrainingDisplay(epoch, null, val_loss);
-                }
-
-                // forward the network (get logits of all training datapoints)
-                let loss = new Value(0);
-                for (const [x, y] of train_split) {
-                    const logits = mlp.call([new Value(x[0]), new Value(x[1])]);
-                    loss = loss.add(crossEntropy(logits, y));
-                }
-                loss = loss.mul(1.0 / train_split.length); // normalize the loss
-
-                // backward pass (deposit the gradients)
-                loss.backward();
-
-                // update with AdamW
-                for (const p of mlp.parameters()) {
+        function trainUpdate() {
+            // update with AdamW
+            for (const p of mlp.parameters()) {
                     p.m = beta1 * p.m + (1 - beta1) * p.grad;
                     p.v = beta2 * p.v + (1 - beta2) * Math.pow(p.grad, 2);
                     const m_hat = p.m / (1 - Math.pow(beta1, epoch + 1));
@@ -737,48 +735,36 @@
                 updateTrainingDisplay(epoch, loss.data, null);
 
                 epoch++;
+        }
+
+        function trainModelStep(stage, fullStep = false) {
+            if (!mlp) {
+                console.error("MLP not initialized");
+                return;
+            }
+
+            if (fullStep) {
+                resetCurrentTrainingStage();
+                trainForward();
+                trainBackward();
+                trainUpdate();
             } else {
                 switch (stage) {
                     case 0: // Forward pass
-                        if (epoch % 10 === 0) {
-                            const val_loss = evalSplit(mlp, val_split);
-                            updateTrainingDisplay(epoch, null, val_loss);
-                        }
-
-                        loss = new Value(0);
-                        for (const [x, y] of train_split) {
-                            const logits = mlp.call([new Value(x[0]), new Value(x[1])]);
-                            loss = loss.add(crossEntropy(logits, y));
-                        }
-                        loss = loss.mul(1.0 / train_split.length);
-                        updateTrainingDisplay(epoch, loss.data, null);
+                        trainForward();
                         break;
 
                     case 1: // Backward pass
-                        if (loss) {
-                            loss.backward();
-                        } else {
-                            console.error("No loss computed. Run forward pass first.");
-                        }
+                        trainBackward();
                         break;
-
                     case 2: // Update
-                        for (const p of mlp.parameters()) {
-                            p.m = beta1 * p.m + (1 - beta1) * p.grad;
-                            p.v = beta2 * p.v + (1 - beta2) * Math.pow(p.grad, 2);
-                            const m_hat = p.m / (1 - Math.pow(beta1, epoch + 1));
-                            const v_hat = p.v / (1 - Math.pow(beta2, epoch + 1));
-                            p.data -= learning_rate * (m_hat / (Math.sqrt(v_hat) + eps) + weight_decay * p.data);
-                        }
-                        mlp.zeroGrad();
-                        epoch++;
+                        trainUpdate();
                         break;
                 }
                 currentTrainingStage = (stage + 1) % 3;
                 updateButtonState(btnFwdBackUp, currentTrainingStage);
             }
         }
-
 
         function trainModel(state) {
             function trainingLoop() {
@@ -1135,6 +1121,10 @@
             trainModelStep(currentTrainingStage, false);
             updateButtonState(this, currentTrainingStage);
             showInfo({ target: this });
+        });
+
+        btnResetMLP.addEventListener('click', function () {
+            resetMLP();
         });
 
         document.getElementById('btn-shock-weights').addEventListener('click', function () {
