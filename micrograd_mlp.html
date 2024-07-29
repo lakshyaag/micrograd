@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Micrograd MLP Viz</title>
+    <title>Micrograd MLP Viz 2</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -12,14 +12,19 @@
             padding: 0;
         }
 
-        #container {
+        #reporting-container {
+            display: block;
+            /* justify-content: center; */
+        }
+
+        #main-container {
             display: flex;
             width: 100%;
-            height: 100vh;
+            height: 700px;
         }
 
         #svg-container {
-            flex: 0 0 1300px;
+            flex: 0 0 1200px;
             z-index: 10;
             /* overflow: auto; */
         }
@@ -50,8 +55,10 @@
             font-size: 16px;
             line-height: 1.5;
 
-            min-height: 200px;
+            height: 250px;
             border-radius: 15px;
+            overflow-y: auto;
+
         }
 
         #info .katex {
@@ -66,7 +73,8 @@
         }
 
         #layerInput {
-            width: 200px;
+            width: 60px;
+            font-size: 16px;
         }
 
         .layer:hover rect {
@@ -118,6 +126,64 @@
         .node.selected {
             fill: #ffb650;
         }
+
+        /* MLP actions */
+        #button-group-container {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        #button-group {
+            display: flex;
+            align-items: center;
+        }
+
+        #button-group button {
+            margin: 0 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #fff;
+            color: navy;
+        }
+
+        #button-group .large-button {
+            font-size: 24px;
+            width: 50px;
+            height: 50px;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 1px 4px 0 rgba(31, 38, 135, 0.2);
+        }
+
+
+        #button-group .small-button {
+            font-size: 18px;
+            padding: 8px 16px;
+            width: 50px;
+            height: 40px;
+        }
+
+        #button-group button:hover {
+            background-color: #d1eaeb;
+        }
+
+        #button-group button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: #eee;
+        }
+
+
+        /* TODO RM */
+        #animation-controls {
+            display: none;
+        }
     </style>
     <!-- for LaTeX -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
@@ -130,18 +196,32 @@
     <!--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         HTML
      -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-->
-    <div id="container">
+    <div id="main-container">
         <div id="svg-container">
-            <svg id="network" width="1300" height="700"></svg>
+            <svg id="network" width="1200" height="700"></svg>
         </div>
         <div id="right-container">
             <div id="info-container">
                 <div id="info"></div>
+                <div id="button-group-container">
+                    <div id="button-group">
+                        <button id="btn-reset-mlp" class="small-button">↺</button>
+                        <button id="btn-shock-weights" class="small-button">ϟ</button>
+                        <button id="btn-play-pause" class="large-button">
+                            <span id="btn-play-pause-content">▶</span>
+                        </button>
+
+                        <button id="btn-step" class="small-button">▶|</button>
+                        <button id="btn-fwd-backprop-update" class="small-button">→</button>
+                    </div>
+                </div>
             </div>
             <div id="controls-container">
                 <div id="controls">
+                    <span>[2, </span>
                     <input type="text" id="layerInput">
-                    <button onclick="updateNetwork()">New Network</button>
+                    <span> 3]</span>
+                    <button onclick="updateNetwork()">Edit hidden layer dimensions</button>
                 </div>
                 <div id="animation-controls">
                     <h4>note: all explanations in the info box are WIP</h4>
@@ -156,32 +236,70 @@
                     <button id="btn-time-locked-play">Test Optimize (time synced)</button>
                 </div>
             </div>
+
         </div>
     </div>
+    <div id="reporting-container">
+        <div id="epoch-display">Epoch: 0</div>
+        <div id="train-loss-display">Train Loss: N/A</div>
+        <div id="val-loss-display">Validation Loss: N/A</div>
+        <div id="log-container"></div>
+    </div>
+
+
 
     <!--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         Javascript
      -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-->
     <script>
+        // globals
+        let mlp;
+        let layerDims;
+        let train_split, val_split, test_split;
+
+        let isRunningOptimization = false;
+        // let isReadyBackprop = false;
+        let optimizationStateName = 'forward';
+        let epoch = 0;
+
+        // AdamW
+        let learning_rate = 1e-1;
+        let beta1 = 0.9;
+        let beta2 = 0.95;
+        let weight_decay = 1e-4;
+        const eps = 1e-8;
+
+        const shockNoiseScale = 0.3; // Adjust this value to control the magnitude of the shock
+
+        const btnPlayPause = document.getElementById('btn-play-pause');
+        // const btnPlayPauseContent = document.getElementById('btn-play-pause-content');
+        const btnResetMLP = document.getElementById('btn-reset-mlp');
+        const btnFwdBackUp = document.getElementById('btn-fwd-backprop-update');
+
+        const infoElement = document.getElementById('info');
+
+
         let selectedElement = null;
         const svg = document.getElementById('network');
-        const info = document.getElementById('info');
-        const initialLayers = "[2, 10, 10, 3]"
-        let layers = JSON.parse(initialLayers);
-        const svgWidth = 1300;
+        // const info = document.getElementById('info');
+        const initialHidden = "16,"
+        const initialLayers = `[2, ${initialHidden} 3]`
+        // const initialLayers = "[2, 10, 10, 3]"
+        layerDims = JSON.parse(initialLayers)
+        const svgWidth = 1200;
         const svgHeight = 700;
         const LATEX_FONT_SIZE = 16;
         const LATEX_COLOR = '#999';
         const LATEX_COLOR_LOSS = '#666';
-        const showConnectionStrengthOpacity = true;
         const layerColors = {
             x: {
                 shape: "#ccc",
                 overlay: "rgba(204, 204, 204, 0.1)"
             },
             fc: {
+                // keep layer display minimaly white for now
                 shape: '#FFFFFF',
-                overlay: "rgba(255, 255, 255, 0.2)" // keep white for now
+                overlay: "rgba(255, 255, 255, 0.2)"
             },
             y: {
                 shape: "#ccc",
@@ -193,375 +311,139 @@
         };
 
 
+
+        function getLayerColor(layerIndex) {
+            if (layerIndex === 0) return layerColors.x;
+            if (layerIndex === layerDims.length) return layerColors.y;
+            return layerColors.fc;
+        }
+
+        function resetAdamMLP() {
+            for (const p of mlp.parameters()) {
+                p.m = 0.0;
+                p.v = 0.0;
+            }
+        }
+
+        function resetData() {
+            [train_split, val_split, test_split] = gen_data(random, 100);
+
+            resetTrainingDisplay();
+            epoch = 0;
+        }
+
+        function resetMLP() {
+            const inputSize = layerDims[0];
+            const outputSize = layerDims[layerDims.length - 1];
+            const hiddenLayers = layerDims.slice(1, -1);
+            mlp = new MLP(inputSize, hiddenLayers.concat(outputSize));
+            resetAdamMLP();
+
+            resetTrainingDisplay();
+            epoch = 0;
+        }
+
         function updateNetwork() {
-            const input = document.getElementById('layerInput').value;
+            let input = document.getElementById('layerInput').value.trim();
             try {
-                const newLayers = JSON.parse(input);
-                if (Array.isArray(newLayers) && newLayers.length >= 2 && newLayers.length <= 12 && newLayers.every(n => n <= 10)) {
-                    layers = newLayers;
-                    drawNetwork();
+                // Add trailing comma if missing
+                if (!input.endsWith(',')) {
+                    input += ',';
+                }
+                const cleanedInput = input.replace(/,\s*$/, ',').trim(); // Ensure single trailing comma
+                const newLayers = JSON.parse(`[2, ${cleanedInput} 3]`);
+                if (Array.isArray(newLayers) && newLayers.length >= 3 && newLayers.length <= 10 && newLayers.every(n => n <= 16)) {
+                    layerDims = newLayers;
+                    resetMLP();
+                    // Update the input field to reflect the correct interpretation
+                    document.getElementById('layerInput').value = cleanedInput;
                 } else {
-                    alert('Invalid input. Please use format [n1, n2, ..] with max 12 layers and max 10 nodes per layer.');
+                    alert('Invalid input. Please use format n1, n2, .. with max 8 hidden layers and max 16 nodes per layer.');
                 }
             } catch (e) {
-                alert('Invalid input. Please use format [n1, n2, ..]');
+                alert('Invalid input. Please use format n1, n2, ..');
             }
         }
 
 
-        function getLayerColor(layerIndex) {
-            if (layerIndex === 0) return layerColors.x;
-            if (layerIndex === layers.length) return layerColors.y;
-            return layerColors.fc;
-        }
-
-        function randomNormal() {
-            let u = 0, v = 0;
-            while (u === 0) u = Math.random();
-            while (v === 0) v = Math.random();
-            return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-        }
-
-        function initializeGradients() {
-            const connections = document.querySelectorAll('.connection:not([data-to^="' + layers.length + ',"])');
-            connections.forEach(connection => {
-                connection.dataset.gradient = randomNormal().toFixed(4);
-            });
-        }
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw the MLP
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         function drawNetwork() {
+            // n_layers = 
+            // algo: start with nin. create
             svg.innerHTML = '';
 
-            const layerGap = svgWidth / (layers.length + 2);
-
-            layers.forEach((nodeCount, layerIndex) => {
-                const x = (layerIndex + 1) * layerGap;
-                const layerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                layerGroup.classList.add('layer');
-                layerGroup.dataset.layer = layerIndex;
-
-                const layerRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                layerRect.setAttribute('x', x - 15);
-                layerRect.setAttribute('y', 0);
-                layerRect.setAttribute('width', 30);
-                layerRect.setAttribute('height', svgHeight);
-                const layerColor = getLayerColor(layerIndex);
-                layerRect.setAttribute('fill', layerColor.overlay);
-
-                layerGroup.appendChild(layerRect);
-
-                layerGroup.addEventListener('mouseover', showInfo);
-                layerGroup.addEventListener('mouseout', clearInfo);
-                layerGroup.addEventListener('click', showInfo);
-
-                const totalNodes = layerIndex < layers.length - 1 ? nodeCount + 1 : nodeCount;
-
-                for (let i = 0; i < nodeCount; i++) {
-                    const y = (i + 1) * (svgHeight / (totalNodes + 1));
-                    drawNode(x, y, layerIndex, i, layerGroup);
-                }
-
-                // Add bias node for all layers except the last one
-                if (layerIndex < layers.length - 1) {
-                    const biasY = (nodeCount + 1) * (svgHeight / (totalNodes + 1));
-                    drawBiasNode(x, biasY, layerIndex, layerGroup);
-                }
-
-                svg.appendChild(layerGroup);
-
-                if (layerIndex < layers.length - 1) {
-                    drawConnections(layerIndex, x, layerGap);
-                }
-            });
-
-            // Draw the additional "y" layer
-            const yLayerX = (layers.length + 1) * layerGap;
-            const yLayerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            yLayerGroup.classList.add('layer');
-            yLayerGroup.dataset.layer = layers.length;
-
-            const yLayerRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            yLayerRect.setAttribute('x', yLayerX - 15);
-            yLayerRect.setAttribute('y', 0);
-            yLayerRect.setAttribute('width', 30);
-            yLayerRect.setAttribute('height', svgHeight);
-            yLayerRect.setAttribute('fill', layerColors.y.overlay);
-
-            yLayerGroup.appendChild(yLayerRect);
-
-            yLayerGroup.addEventListener('mouseover', showInfo);
-            yLayerGroup.addEventListener('mouseout', clearInfo);
-            yLayerGroup.addEventListener('click', showInfo);
-
-            const lastLayerNodeCount = layers[layers.length - 1];
-            for (let i = 0; i < lastLayerNodeCount; i++) {
-                const y = (i + 1) * (svgHeight / (lastLayerNodeCount + 1));
-                drawNode(yLayerX, y, layers.length, i, yLayerGroup);
+            if (!mlp) {
+                resetMLP();
             }
 
-            svg.appendChild(yLayerGroup);
-
-            // Draw connections between y_hat and y
-            drawYConnections(layers.length - 1, (layers.length) * layerGap, layerGap);
-
-            // Draw the curly brace and "loss" text
-            const lastLayerX = (layers.length + 1) * layerGap;
-            const braceWidth = 15;
-            const topNodeY = (1) * (svgHeight / (lastLayerNodeCount + 1));
-            const bottomNodeY = (lastLayerNodeCount) * (svgHeight / (lastLayerNodeCount + 1));
-            const braceHeight = bottomNodeY - topNodeY;
-            const braceX = lastLayerX + 30;
-            const braceY = topNodeY;
-
-            const brace = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            brace.setAttribute('d', `M ${braceX} ${braceY}
-                         C ${braceX} ${braceY + braceHeight * 0.05}, ${braceX + braceWidth * 0.6} ${braceY + braceHeight * 0.1}, ${braceX + braceWidth * 0.8} ${braceY + braceHeight * 0.2}
-                         C ${braceX + braceWidth} ${braceY + braceHeight * 0.3}, ${braceX + braceWidth} ${braceY + braceHeight * 0.4}, ${braceX + braceWidth} ${braceY + braceHeight * 0.45}
-                         L ${braceX + braceWidth * 1.5} ${braceY + braceHeight * 0.5}
-                         L ${braceX + braceWidth} ${braceY + braceHeight * 0.55}
-                         C ${braceX + braceWidth} ${braceY + braceHeight * 0.6}, ${braceX + braceWidth} ${braceY + braceHeight * 0.7}, ${braceX + braceWidth * 0.8} ${braceY + braceHeight * 0.8}
-                         C ${braceX + braceWidth * 0.6} ${braceY + braceHeight * 0.9}, ${braceX} ${braceY + braceHeight * 0.95}, ${braceX} ${braceY + braceHeight}`);
-            brace.setAttribute('fill', 'none');
-            brace.setAttribute('stroke', '#ccc');
-            brace.setAttribute('stroke-width', '2');
-            svg.appendChild(brace);
-
-            addLayerLabels();
-            addLossLabel();
+            const layerGap = svgWidth / (layers.length + 2);
         }
+
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw nodes
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        function drawNode(x, y, layerIndex, nodeIndex, parent, isBiasNode = false) {
-            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            const shapeColor = isBiasNode ? layerColors.bias.shape : getLayerColor(layerIndex).shape
-            circle.setAttribute('cx', x);
-            circle.setAttribute('cy', y);
-            circle.setAttribute('r', isBiasNode ? 5 : 10);
-            circle.setAttribute('fill', shapeColor);
-            circle.setAttribute('stroke', 'gray');
-            circle.setAttribute('stroke-width', '1');
-            circle.classList.add('node');
-            circle.dataset.layer = layerIndex;
-            circle.dataset.node = nodeIndex;
-            parent.appendChild(circle);
+        // function drawNode(x, y, layerIndex, nodeIndex, parent, isBiasNode = false) {
 
-            circle.addEventListener('mouseover', showInfo);
-            circle.addEventListener('mouseout', clearInfo);
-            circle.addEventListener('click', showInfo);
-            circle.addEventListener('mouseenter', handleNodeHover);
-            circle.addEventListener('mouseleave', resetNodeHover);
-        }
 
-        function drawBiasNode(x, y, layerIndex, parent) {
-            drawNode(x, y, layerIndex, layers[layerIndex], parent, true);
-        }
+        // function drawBiasNode(x, y, layerIndex, parent) {
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw connections
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        function drawConnections(layerIndex, x, layerGap) {
-            const currentLayer = layers[layerIndex];
-            const nextLayer = layers[layerIndex + 1];
-            const connectionStrengths = [];
-
-            // Generate connection strengths
-            for (let i = 0; i < (currentLayer + 1) * nextLayer; i++) {
-                connectionStrengths.push(randomNormal());
-            }
-
-            const maxStrength = Math.max(...connectionStrengths.map(Math.abs));
-
-            let connectionIndex = 0;
-            for (let i = 0; i <= currentLayer; i++) {
-                const fromY = (i + 1) * (svgHeight / (currentLayer + 2));
-                for (let j = 0; j < nextLayer; j++) {
-                    // Adjust toY calculation based on whether it's the last layer or not
-                    const toY = (layerIndex === layers.length - 2)
-                        ? (j + 1) * (svgHeight / (nextLayer + 1))  // Last layer (y_hat)
-                        : (j + 1) * (svgHeight / (nextLayer + 2)); // Other layers
-
-                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                    line.setAttribute('x1', x);
-                    line.setAttribute('y1', fromY);
-                    line.setAttribute('x2', x + layerGap);
-                    line.setAttribute('y2', toY);
-                    line.setAttribute('stroke', '#999');
-                    line.setAttribute('stroke-width', '1');
-
-                    const strength = connectionStrengths[connectionIndex];
-                    line.setAttribute('stroke-opacity', showConnectionStrengthOpacity ? Math.abs(strength) / maxStrength : 1);
-
-                    line.classList.add('connection');
-                    line.dataset.from = `${layerIndex},${i}`;
-                    line.dataset.to = `${layerIndex + 1},${j}`;
-                    line.dataset.strength = strength.toFixed(4);
-                    line.dataset.maxStrength = maxStrength.toFixed(4);
-                    svg.appendChild(line);
-
-                    line.addEventListener('mouseover', (event) => {
-                        showInfo(event);
-                    });
-                    line.addEventListener('mouseout', (event) => {
-                        clearInfo(event);
-                        resetConnectionAppearance(event);
-                    });
-
-                    line.addEventListener('click', (event) => {
-                        // line.setAttribute('stroke-opacity', 1);
-                        showInfo(event);
-                    });
-
-                    connectionIndex++;
-                }
-            }
-
-            initializeGradients();
-        }
+        // function drawConnections(layerIndex, x, layerGap) {
 
 
-        function drawYConnections(layerIndex, x, layerGap) {
-            const currentLayer = layers[layerIndex];
+        // function drawYConnections(layerIndex, x, layerGap) {
 
-            for (let i = 0; i < currentLayer; i++) {
-                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                line.setAttribute('x1', x);
-                line.setAttribute('y1', (i + 1) * (svgHeight / (currentLayer + 1)));
-                line.setAttribute('x2', x + layerGap);
-                line.setAttribute('y2', (i + 1) * (svgHeight / (currentLayer + 1)));
-                line.setAttribute('stroke', '#999');
-                line.setAttribute('stroke-width', '1');
-                line.setAttribute('stroke-dasharray', '5,5');
-
-                line.classList.add('connection');
-                line.dataset.from = `${layerIndex},${i}`;
-                line.dataset.to = `${layerIndex + 1},${i}`;
-                svg.appendChild(line);
-
-                line.addEventListener('mouseover', showInfo);
-                line.addEventListener('mouseout', clearInfo);
-                line.addEventListener('click', showInfo);
-            }
-        }
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Display detailed info top-right
+        // TODO later - selectedElement logic
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
         function showInfo(event) {
             const target = event.target;
             let content = '';
 
-            if (target.classList.contains('node')) {
-                const layerIndex = parseInt(target.dataset.layer);
-                const nodeIndex = parseInt(target.dataset.node) + 1;
-                if (nodeIndex === layers[layerIndex] + 1) {
-                    content = `Bias node (the vector $$\\mathbf{1}$$) for layer $$${layerIndex + 1}$$`;
-                } else if (layerIndex === 0) {
-                    content = `Input feature $$${nodeIndex}$$`;
-                } else if (layerIndex === layers.length - 1) {
-                    content = `Output feature $$${nodeIndex}$$ for $$\\hat{y}$$`;
-                } else if (layerIndex === layers.length) {
-                    content = `Output feature $$${nodeIndex}$$ for $$y$$`;
+            if (target.id === 'btn-play-pause' || target.id === "btn-play-pause-content") {
+                if (isRunningOptimization) {
+                    content = "Pause optimization";
                 } else {
-                    content = `Node in fully connected layer ${layerIndex}, index ${nodeIndex}`;
+                    content = "Run optimization";
                 }
-            } else if (target.classList.contains('connection')) {
-                const [fromLayer, fromNode] = target.dataset.from.split(',');
-                const [toLayer, toNode] = target.dataset.to.split(',');
-                const fromLayerIndex = parseInt(fromLayer) + 1;
-                const toLayerIndex = parseInt(toLayer) + 1;
-                const fromNodeIndex = parseInt(fromNode) + 1;
-                const toNodeIndex = parseInt(toNode) + 1;
-
-
-                if (fromLayerIndex === layers.length && toLayerIndex === layers.length + 1) {
-                    content = `Compare $$\\hat{y}$$ and $$y$$ at feature index ${fromNodeIndex}`;
-                } else {
-                    const strength = parseFloat(target.dataset.strength);
-                    const gradient = parseFloat(target.dataset.gradient);
-                    const absGradient = Math.abs(gradient);
-                    const maxGradient = 1; // Adjust this value based on your gradient range
-
-                    let color;
-                    if (gradient >= 0) {
-                        color = `rgba(0, 0, 255, ${absGradient / maxGradient})`;
-                    } else {
-                        color = `rgba(255, 0, 0, ${absGradient / maxGradient})`;
-                    }
-
-                    target.style.filter = `drop-shadow(0 0 3px ${color})`;
-                    if (strength >= 0) {
-                        target.classList.add('positive');
-                        target.classList.remove('negative');
-                    } else {
-                        target.classList.add('negative');
-                        target.classList.remove('positive');
-                    }
-                    if (fromNodeIndex === layers[fromLayerIndex - 1] + 1) {
-                        content = `Bias term for node $$${toNodeIndex}$$ in layer $$${toLayerIndex}$$.\n\nStrength: $$${strength.toFixed(4)}$$`;
-                    } else {
-                        content = `Connection from node $$${fromNodeIndex}$$ in layer $$${fromLayerIndex}$$ to node $$${toNodeIndex}$$ in layer $$${toLayerIndex}$$.\n\nStrength: $$${strength.toFixed(4)}$$`;
-                    }
-                    content += ` Gradient: ${gradient.toFixed(4)}`;
-
+            } else if (target.id === 'btn-fwd-backprop-update') {
+                switch (optimizationStateName) {
+                    case 'forward':
+                        content = "**Forward pass**: run inference/prediction on the input data to produce predictions $$\\hat{y}$$ and calculate loss with respect to the true output values $$y$$.";
+                        break;
+                    case 'backprop':
+                        content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers. We are able to accomplish this using the chain rule from calculus ($$\\dfrac{dL}{dW_{l}} → \\dfrac{dL}{dW_{l-1}} → ... → \\dfrac{dL}{dW_{1}}$$, where $$l$$ is the number of layers in our MLP)";
+                        break;
+                    case 'update':
+                        content = "**Update weights**: Use the gradient information to update the weights $$ W $$ of the network based on our optimization algorithm (AdamW in this case) and hyperparameters (e.g. learning rate, weight decay), with the goal of nudging this network towards being able to better predict the output given the input. Then, zero out the gradients to prepare for the next step.";
+                        break;
                 }
+            } else if (target.id === 'btn-reset-mlp') {
+                content = "Reset the network parameters to randomly initialized values based on the Uniform Xavier initialization.";
+            } else if (target.id === 'btn-shock-weights') {
+                content = `\"Shock\" the weights: perturb the weight parameters by adding a small amount of random uniform noise between $$[-${shockNoiseScale}, ${shockNoiseScale}]$$.`;
+            } else if (target.id === 'btn-step') {
+                content = "Run one full epoch of the training loop and show network animations illustrating the forward pass, backpropagation of gradients, and update of the weights.";
             }
-            // else if (target.closest('.layer')) {
-            else if (target.classList.contains('layer') || target.parentElement.classList.contains('layer')) {
-                const layer = target.classList.contains('layer') ? target : target.parentElement;
-                const layerIndex = parseInt(layer.dataset.layer);
-                if (layerIndex === 0) {
-                    content = `Input layer, containing ${layers[layerIndex]} features`;
-                } else if (layerIndex === layers.length - 1) {
-                    content = `Output layer $$\\hat{y}$$, containing ${layers[layerIndex]} features`;
-                } else if (layerIndex === layers.length) {
-                    content = `True values $$y$$, containing ${layers[layers.length - 1]} features`;
-                } else {
-                    content = `Fully connected layer ${layerIndex}, containing ${layers[layerIndex]} nodes`;
-                }
-            } else if (target.closest('.latex-label')) {
-                const latexLabel = target.closest('.latex-label');
-                content = `LaTeX formula: $$${latexLabel.dataset.latex}$$`;
-            }
-
-            const infoElement = document.getElementById('info');
-
-            if (event.type === 'click') {
-                if (target.classList.contains('node') ||
-                    target.classList.contains('connection') ||
-                    target.closest('.layer') ||
-                    target.closest('.latex-label')) {
-
-                    if (selectedElement) {
-                        selectedElement.classList.remove('selected');
-                    }
-                    target.classList.add('selected');
-                    selectedElement = target;
-                    renderInfoContent(infoElement, content);
-                } else {
-                    // Clicking a non-displayable element
-                    if (selectedElement) {
-                        selectedElement.classList.remove('selected');
-                    }
-                    selectedElement = null;
-                    infoElement.textContent = '';
-                }
-            } else if ((event.type === 'mouseover' && !selectedElement) || event.target == selectedElement) {
-                // Only update info on mouseover if there's no selected element
-                // or this event target is the selected element
-                renderInfoContent(infoElement, content);
-            }
+            renderInfoContent(infoElement, content);
         }
 
+
         function clearInfo(event) {
-            if (event.type === 'mouseout' && !selectedElement) {
+            if (!selectedElement) {
                 document.getElementById('info').textContent = '';
             }
         }
+
 
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -597,24 +479,7 @@
         }
 
 
-        function addLayerLabels() {
-            const layerGap = svgWidth / (layers.length + 2);
-
-            // Input layer label
-            svg.appendChild(createLatexLabel(layerGap, svgHeight - 20, '\\mathbf{x}', LATEX_COLOR));
-            // Hidden layer labels
-            for (let i = 1; i < layers.length - 1; i++) {
-                svg.appendChild(createLatexLabel((i + 1) * layerGap, svgHeight - 20, `\\mathbf{x}:=\\phi(\\mathbf{W}_{${i}}\\mathbf{x})`, LATEX_COLOR));
-            }
-            // Output layer label
-            svg.appendChild(createLatexLabel(layers.length * layerGap, svgHeight - 20, `\\hat{\\mathbf{y}} := \\mathbf{W}_{${layers.length - 1}}\\mathbf{x}`, LATEX_COLOR));
-            // True values label
-            svg.appendChild(createLatexLabel((layers.length + 1) * layerGap, svgHeight - 20, '\\mathbf{y}', LATEX_COLOR));
-            // Weight labels
-            for (let i = 1; i < layers.length; i++) {
-                svg.appendChild(createLatexLabel(i * layerGap + layerGap / 2, 20, `\\mathbf{W}_{${i}}`, LATEX_COLOR));
-            }
-        }
+        // function addLayerLabels() {
 
 
         function addLossLabel() {
@@ -628,31 +493,57 @@
         // Rendering events and helpers
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         function renderInfoContent(element, content) {
-            const regex = /\$\$(.*?)\$\$/g;
-            const parts = content.split(regex);
-
             element.innerHTML = '';
-            parts.forEach((part, index) => {
-                if (index % 2 === 0) {
-                    // Plain text
-                    const lines = part.split('\n');
-                    lines.forEach((line, lineIndex) => {
-                        element.appendChild(document.createTextNode(line));
-                        if (lineIndex < lines.length - 1) {
-                            element.appendChild(document.createElement('br'));
-                        }
-                    });
-                } else {
-                    // LaTeX
+            let currentIndex = 0;
+
+            while (currentIndex < content.length) {
+                if (content.startsWith('$$', currentIndex)) {
+                    // LaTeX content
+                    const endIndex = content.indexOf('$$', currentIndex + 2);
+                    if (endIndex === -1) {
+                        console.error('Unclosed LaTeX at position', currentIndex);
+                        break;
+                    }
+                    const latexContent = content.slice(currentIndex + 2, endIndex);
                     const span = document.createElement('span');
-                    katex.render(part, span, {
+                    katex.render(latexContent, span, {
                         throwOnError: false,
                         displayMode: false
                     });
                     element.appendChild(span);
+                    currentIndex = endIndex + 2;
+                } else if (content.startsWith('**', currentIndex)) {
+                    // Bold content
+                    const endIndex = content.indexOf('**', currentIndex + 2);
+                    if (endIndex === -1) {
+                        console.error('Unclosed bold at position', currentIndex);
+                        break;
+                    }
+                    const boldContent = content.slice(currentIndex + 2, endIndex);
+                    const strong = document.createElement('strong');
+                    strong.textContent = boldContent;
+                    element.appendChild(strong);
+                    currentIndex = endIndex + 2;
+                } else {
+                    // Plain text
+                    const nextSpecialChar = Math.min(
+                        content.indexOf('$$', currentIndex) === -1 ? Infinity : content.indexOf('$$', currentIndex),
+                        content.indexOf('**', currentIndex) === -1 ? Infinity : content.indexOf('**', currentIndex)
+                    );
+                    const textContent = content.slice(currentIndex, nextSpecialChar === Infinity ? undefined : nextSpecialChar);
+                    const lines = textContent.split('\n');
+                    lines.forEach((line, index) => {
+                        element.appendChild(document.createTextNode(line));
+                        if (index < lines.length - 1) {
+                            element.appendChild(document.createElement('br'));
+                        }
+                    });
+                    currentIndex = nextSpecialChar === Infinity ? content.length : nextSpecialChar;
                 }
-            });
+            }
         }
+
+
 
         function handleNodeHover(event) {
             const target = event.target;
@@ -739,233 +630,375 @@
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Animations
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        // TODO after micrograd implemented: nodes act as accumulators and change color and intensity based
+
+        // after micrograd implemented: nodes act as accumulators and change color and intensity based
         // on weighted input and activation function
-        function animateForwardPass() {
-            const stepDurationMs = 500;
+        function animateForwardPass() { }
 
-            const animationLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            svg.appendChild(animationLayer);
+        function animateBackwardPass() { }
 
-            function isYNode(layerIndex) {
-                return layerIndex === layers.length;
+        function animateUpdateWeights() { }
+
+        function animateShockWeights() { }
+
+
+        function resetTrainingDisplay() {
+            document.getElementById('epoch-display').textContent = `Epoch: 0`;
+            document.getElementById('train-loss-display').textContent = `Train Loss: N/A`;
+            document.getElementById('val-loss-display').textContent = `Validation Loss: N/A`;
+        }
+
+        function updateTrainingDisplay(epochVal, trainLoss, valLoss) {
+            document.getElementById('epoch-display').textContent = `Epoch: ${epochVal}`;
+            if (trainLoss !== null) {
+                document.getElementById('train-loss-display').textContent = `Train Loss: ${trainLoss.toFixed(20)}`;
+            }
+            if (valLoss !== null) {
+                document.getElementById('val-loss-display').textContent = `Validation Loss: ${valLoss.toFixed(20)}`;
+            }
+        }
+
+        function logMessage(message) {
+            const logContainer = document.getElementById('log-container');
+            logContainer.innerHTML += `<p>${message}</p>`;
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Micrograd MLP
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+
+
+        function trainModel() {
+            if (!mlp) {
+                console.error("MLP not initialized");
+                return;
             }
 
-            function animateLayer(layerIndex) {
-                if (layerIndex > layers.length) {
-                    svg.removeChild(animationLayer);
-                    return;
+            const reportingContainer = document.getElementById('reporting-container');
+
+            function trainingStep() {
+                if (!isRunningOptimization) return;
+
+                // evaluate the validation split every few steps
+                if (epoch % 10 === 0) {
+                    const val_loss = evalSplit(mlp, val_split);
+                    updateTrainingDisplay(epoch, null, val_loss);
                 }
 
-                const nodes = document.querySelectorAll(`.node[data-layer="${layerIndex}"]`);
-                nodes.forEach(node => {
-                    const animatedNode = node.cloneNode(true);
-                    if (isYNode(layerIndex)) {
-                        animatedNode.setAttribute('r', '7');  // Smaller radius
-                        animatedNode.setAttribute('fill', '#666');  // dark navy blue color
-                    } else {
-                        animatedNode.setAttribute('r', '15');
-                        animatedNode.setAttribute('fill', '#ffb650');
-                    }
-                    animatedNode.setAttribute('fill-opacity', '0');
-                    animationLayer.appendChild(animatedNode);
+                // forward the network (get logits of all training datapoints)
+                let loss = new Value(0);
+                for (const [x, y] of train_split) {
+                    const logits = mlp.call([new Value(x[0]), new Value(x[1])]);
+                    loss = loss.add(crossEntropy(logits, y));
+                }
+                loss = loss.mul(1.0 / train_split.length); // normalize the loss
 
-                    anime({
-                        targets: animatedNode,
-                        fillOpacity: 0.7,
-                        duration: stepDurationMs,
-                        easing: 'easeInOutQuad'
-                    });
-                });
+                // backward pass (deposit the gradients)
+                loss.backward();
 
-                if (layerIndex < layers.length) {
-                    const connections = document.querySelectorAll(`.connection[data-from^="${layerIndex},"]`);
-                    connections.forEach(conn => {
-                        const strength = parseFloat(conn.dataset.strength);
-                        const absStrength = Math.abs(strength);
-                        const maxStrength = parseFloat(conn.dataset.maxStrength);
-                        const opacity = absStrength / maxStrength;
-                        const color = strength >= 0 ? 'rgb(100, 100, 255)' : 'rgb(255, 100, 100)';
+                // update with AdamW
+                for (const p of mlp.parameters()) {
+                    p.m = beta1 * p.m + (1 - beta1) * p.grad;
+                    p.v = beta2 * p.v + (1 - beta2) * Math.pow(p.grad, 2);
+                    const m_hat = p.m / (1 - Math.pow(beta1, epoch + 1));
+                    const v_hat = p.v / (1 - Math.pow(beta2, epoch + 1));
+                    p.data -= learning_rate * (m_hat / (Math.sqrt(v_hat) + eps) + weight_decay * p.data);
+                }
+                mlp.zeroGrad();
+                updateTrainingDisplay(epoch, loss.data, null);
 
-                        const animatedConn = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        animatedConn.setAttribute('x1', conn.getAttribute('x1'));
-                        animatedConn.setAttribute('y1', conn.getAttribute('y1'));
-                        animatedConn.setAttribute('x2', conn.getAttribute('x1'));
-                        animatedConn.setAttribute('y2', conn.getAttribute('y1'));
-                        animatedConn.setAttribute('stroke', color);
-                        animatedConn.setAttribute('stroke-opacity', opacity);
-                        animatedConn.setAttribute('stroke-width', '3');
+                // reportingContainer.innerHTML += `<p>Epoch ${epoch}, Train Loss: ${loss.data.toFixed(20)}</p>`;
 
-                        // Add dashed line for connection between y_hat and y
-                        if (layerIndex === layers.length - 1) {
-                            animatedConn.setAttribute('stroke-dasharray', '5,5');
+                epoch++;
+                // trainingStep();
+                requestAnimationFrame(trainingStep);
+            }
+            // Start the training loop
+            trainingStep();
+        }
+
+        class RNG {
+            constructor(seed) {
+                this.state = BigInt(seed);
+            }
+
+            random_u32() {
+                // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
+                this.state = BigInt.asUintN(64, this.state);
+                this.state ^= (this.state >> 12n) & 0xFFFFFFFFFFFFFFFFn;
+                this.state ^= (this.state << 25n) & 0xFFFFFFFFFFFFFFFFn;
+                this.state ^= (this.state >> 27n) & 0xFFFFFFFFFFFFFFFFn;
+
+                return Number((this.state * 0x2545F4914F6CDD1Dn >> 32n) & 0xFFFFFFFFn);
+            }
+
+            random() {
+                // random Number in [0, 1)
+                return (this.random_u32() >>> 8) / 16777216.0;
+            }
+
+            uniform(a = 0.0, b = 1.0) {
+                // random Number in [a, b)
+                return a + (b - a) * this.random();
+            }
+        }
+
+        function gen_data(random, n = 100) {
+            let pts = [];
+            for (let i = 0; i < n; i++) {
+                let x = random.uniform(-2.0, 2.0);
+                let y = random.uniform(-2.0, 2.0);
+                // concentric circles
+                // label = 0 if x**2 + y**2 < 1 else 1 if x**2 + y**2 < 2 else 2
+                // very simple dataset
+                let label = x < 0 ? 0 : y < 0 ? 1 : 2;
+                pts.push([[x, y], label]);
+            }
+            // create train/val/test splits of the data (80%, 10%, 10%)
+            let tr = pts.slice(0, Math.floor(0.8 * n));
+            let val = pts.slice(Math.floor(0.8 * n), Math.floor(0.9 * n));
+            let te = pts.slice(Math.floor(0.9 * n));
+            return [tr, val, te];
+        }
+
+        const random = new RNG(42);
+
+        class Value {
+            // stores a single scalar value and its gradient
+            constructor(data, _children = [], _op = '') {
+                this.data = data;
+                this.grad = 0;
+                this._backward = () => { };
+                this._prev = new Set(_children);
+                this._op = _op;
+            }
+
+            add(other) {
+                other = other instanceof Value ? other : new Value(other);
+                const out = new Value(this.data + other.data, [this, other], '+');
+                out._backward = () => {
+                    this.grad += out.grad;
+                    other.grad += out.grad;
+                };
+
+                return out;
+            }
+
+            mul(other) {
+                other = other instanceof Value ? other : new Value(other);
+                const out = new Value(this.data * other.data, [this, other], '*');
+                out._backward = () => {
+                    this.grad += other.data * out.grad;
+                    other.grad += this.data * out.grad;
+                };
+
+                return out;
+            }
+
+            pow(other) {
+                if (typeof other !== 'number') throw new Error("only supporting number powers for now");
+                const out = new Value(Math.pow(this.data, other), [this], `**${other}`);
+
+                out._backward = () => {
+                    this.grad += other * Math.pow(this.data, other - 1) * out.grad;
+                };
+
+                return out;
+            }
+
+            relu() {
+                const out = new Value(this.data < 0 ? 0 : this.data, [this], 'ReLU');
+                out._backward = () => {
+                    this.grad += (out.data > 0) * out.grad;
+                };
+
+                return out;
+            }
+
+            tanh() {
+                const x = Math.tanh(this.data);
+                const out = new Value(x, [this], 'tanh');
+                out._backward = () => {
+                    this.grad += (1 - x * x) * out.grad;
+                };
+
+                return out;
+            }
+
+            exp() {
+                const x = Math.exp(this.data);
+                const out = new Value(x, [this], 'exp');
+                out._backward = () => {
+                    this.grad += x * out.grad;
+                };
+
+                return out;
+            }
+
+            log() {
+                const out = new Value(Math.log(this.data), [this], 'log');
+                out._backward = () => {
+                    this.grad += (1 / this.data) * out.grad;
+                };
+
+                return out;
+            }
+
+            backward() {
+                const topo = [];
+                const visited = new Set();
+
+                function buildTopo(v) {
+                    if (!visited.has(v)) {
+                        visited.add(v);
+                        for (const child of v._prev) {
+                            buildTopo(child);
                         }
-
-                        animationLayer.appendChild(animatedConn);
-
-                        anime({
-                            targets: animatedConn,
-                            x2: conn.getAttribute('x2'),
-                            y2: conn.getAttribute('y2'),
-                            duration: stepDurationMs,
-                            easing: 'easeInOutQuad'
-                        });
-                    });
-                }
-
-                setTimeout(() => animateLayer(layerIndex + 1), stepDurationMs);
-            }
-
-            animateLayer(0);
-        }
-
-
-        function animateBackwardPass() {
-            const stepDurationMs = 500;
-
-            const animationLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            svg.appendChild(animationLayer);
-
-            let maxGradient = 0;
-            document.querySelectorAll('.connection').forEach(conn => {
-                const gradient = Math.abs(parseFloat(conn.dataset.gradient));
-                if (gradient > maxGradient) maxGradient = gradient;
-            });
-
-            function isTerminalNode(layerIndex, nodeIndex) {
-                // X nodes (input layer)
-                if (layerIndex === 0) return true;
-
-                // Bias nodes (last node in each layer except the output layer)
-                if (layerIndex < layers.length - 1 && nodeIndex === layers[layerIndex]) return true;
-
-                return false;
-            }
-
-            function animateLayer(layerIndex) {
-                if (layerIndex < 0) {
-                    svg.removeChild(animationLayer);
-                    return;
-                }
-
-                const nodes = document.querySelectorAll(`.node[data-layer="${layerIndex}"]`);
-                nodes.forEach((node, nodeIndex) => {
-                    const animatedNode = node.cloneNode(true);
-                    if (isTerminalNode(layerIndex, nodeIndex)) {
-                        animatedNode.setAttribute('r', '7');  // Smaller radius
-                        animatedNode.setAttribute('fill', '#666');  // dark navy blue color
-                    } else {
-                        animatedNode.setAttribute('r', '15');
-                        animatedNode.setAttribute('fill', '#ffb650');
+                        topo.push(v);
                     }
-                    animatedNode.setAttribute('fill-opacity', '0');
-                    animationLayer.appendChild(animatedNode);
-
-                    anime({
-                        targets: animatedNode,
-                        fillOpacity: 0.7,
-                        duration: stepDurationMs,
-                        easing: 'easeInOutQuad'
-                    });
-                });
-
-                if (layerIndex > 0) {
-                    const connections = document.querySelectorAll(`.connection[data-to^="${layerIndex},"]`);
-                    connections.forEach(conn => {
-                        const gradient = parseFloat(conn.dataset.gradient);
-                        const absGradient = Math.abs(gradient);
-                        const opacity = absGradient / maxGradient;
-                        const color = gradient >= 0 ? 'rgb(100, 100, 255)' : 'rgb(255, 100, 100)';
-
-                        const animatedConn = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                        animatedConn.setAttribute('x1', conn.getAttribute('x2'));
-                        animatedConn.setAttribute('y1', conn.getAttribute('y2'));
-                        animatedConn.setAttribute('x2', conn.getAttribute('x2'));
-                        animatedConn.setAttribute('y2', conn.getAttribute('y2'));
-                        animatedConn.setAttribute('stroke', color);
-                        animatedConn.setAttribute('stroke-opacity', opacity);
-                        animatedConn.setAttribute('stroke-width', '3');
-
-                        // Add dashed line for connection between y and y_hat
-                        if (layerIndex === layers.length) {
-                            animatedConn.setAttribute('stroke-dasharray', '5,5');
-                        }
-
-                        animationLayer.appendChild(animatedConn);
-
-                        anime({
-                            targets: animatedConn,
-                            x2: conn.getAttribute('x1'),
-                            y2: conn.getAttribute('y1'),
-                            duration: stepDurationMs,
-                            easing: 'easeInOutQuad'
-                        });
-                    });
                 }
 
-                setTimeout(() => animateLayer(layerIndex - 1), stepDurationMs);
+                buildTopo(this);
+
+                this.grad = 1;
+                for (const v of topo.reverse()) {
+                    v._backward();
+                }
             }
 
-            animateLayer(layers.length);
+            neg() { return this.mul(-1); }
+            sub(other) { return this.add(other instanceof Value ? other.neg() : new Value(-other)); }
+            div(other) { return this.mul(other instanceof Value ? other.pow(-1) : new Value(Math.pow(other, -1))); }
+
+            toString() {
+                return `Value(data=${this.data}, grad=${this.grad})`;
+            }
+        }
+
+
+        class Module {
+            zeroGrad() {
+                for (const p of this.parameters()) {
+                    p.grad = 0;
+                }
+            }
+
+            parameters() {
+                return [];
+            }
+        }
+
+        class Neuron extends Module {
+            constructor(nin, kwargs) {
+                super();
+                this.w = Array(nin).fill().map(() => new Value(random.uniform(-1, 1) * Math.pow(nin, -0.5)));
+                this.b = new Value(0);
+                this.nonlin = kwargs.nonlin !== undefined ? kwargs.nonlin : true;
+            }
+
+            call(x) {
+                const act = this.w.reduce((sum, wi, i) => sum.add(wi.mul(x[i])), this.b);
+                return this.nonlin ? act.tanh() : act;
+            }
+
+            parameters() {
+                return [...this.w, this.b];
+            }
+
+            toString() {
+                return `${this.nonlin ? 'TanH' : 'Linear'}Neuron(${this.w.length})`;
+            }
+        }
+
+        class Layer extends Module {
+            constructor(nin, nout, kwargs = {}) {
+                super();
+                this.neurons = Array(nout).fill().map(() => new Neuron(nin, kwargs));
+            }
+
+            call(x) {
+                const out = this.neurons.map(n => n.call(x));
+                return out.length === 1 ? out[0] : out;
+            }
+
+            parameters() {
+                return this.neurons.flatMap(n => n.parameters());
+            }
+
+            toString() {
+                return `Layer of [${this.neurons.join(', ')}]`;
+            }
+        }
+
+        class MLP extends Module {
+            constructor(nin, nouts) {
+                logMessage(nouts)
+                super();
+                const sz = [nin, ...nouts];
+                this.layers = sz.slice(0, -1).map((s, i) => new Layer(s, sz[i + 1], { nonlin: i !== nouts.length - 1 }));
+
+            }
+
+            call(x) {
+                for (const layer of this.layers) {
+                    x = layer.call(x);
+                }
+                return Array.isArray(x) ? x : [x]; // Ensure the output is always an array
+            }
+
+            parameters() {
+                return this.layers.flatMap(l => l.parameters());
+            }
+
+            toString() {
+                return `MLP of [${this.layers.join(', ')}]`;
+            }
+
+            shockWeights() {
+                for (const layer of this.layers) {
+                    for (const neuron of layer.neurons) {
+                        for (const w of neuron.w) {
+                            const noise = random.uniform(-shockNoiseScale, shockNoiseScale);
+                            w.data += noise;
+                        }
+                        const bias_noise = random.uniform(-shockNoiseScale, shockNoiseScale);
+                        neuron.b.data += bias_noise;
+                    }
+                }
+            }
+        }
+
+        function crossEntropy(logits, target) {
+            // subtract the max for numerical stability (avoids overflow)
+            const maxVal = Math.max(...logits.map(v => v.data));
+            const shiftedLogits = logits.map(v => v.sub(maxVal));
+            // 1) evaluate elementwise e^x
+            const ex = shiftedLogits.map(x => x.exp());
+            // 2) compute the sum of the above
+            const denom = ex.reduce((sum, x) => sum.add(x));
+            // 3) normalize by the sum to get probabilities
+            const probs = ex.map(x => x.div(denom));
+            // 4) log the probabilities at target
+            const logp = probs[target].log();
+            // 5) the negative log likelihood loss (invert so we get a loss - lower is better)
+            const nll = logp.neg();
+            return nll;
+        }
+
+        // evaluation utility to compute the loss on a given split of the dataset
+        function evalSplit(model, split) {
+            // evaluate the loss of a split
+            let loss = new Value(0);
+            for (const [x, y] of split) {
+                const logits = model.call([new Value(x[0]), new Value(x[1])]);
+                loss = loss.add(crossEntropy(logits, y));
+            }
+            loss = loss.mul(1.0 / split.length); // normalize the loss
+            return loss.data;
         }
 
 
-
-        function concurrentPlay() { /* ... */ }
-        function timeLockedPlay() { /* ... */ }
-
-
-        function shockWeights() {
-            const connections = document.querySelectorAll('.connection:not([data-to^="' + layers.length + ',"])');
-            let maxStrength = 0;
-
-            // First pass: update strengths and find max
-            connections.forEach(connection => {
-                const strength = parseFloat(connection.dataset.strength);
-                const jitterStr = 0.7;
-                const jitter = (Math.random() - 0.5) * jitterStr; // Small random value
-                const newStrength = strength + jitter;
-
-                // Update the connection's dataset with the new strength
-                connection.dataset.strength = newStrength.toFixed(4);
-
-                // Update max strength
-                maxStrength = Math.max(maxStrength, Math.abs(newStrength));
-            });
-
-            // Second pass: update opacities and animate
-            connections.forEach(connection => {
-                const newStrength = parseFloat(connection.dataset.strength);
-
-                // Calculate new opacity
-                const opacity = Math.abs(newStrength) / maxStrength;
-
-                // Animate jitter effect and opacity change
-                connection.animate([
-                    { transform: 'translateY(0px)' },
-                    { transform: 'translateY(-5px)' },
-                    { transform: 'translateY(5px)' },
-                    { transform: 'translateY(0px)' }
-                ], {
-                    duration: 200,
-                    iterations: 1,
-                    fill: 'forwards'
-                });
-
-                // Update the stroke-opacity attribute after animation
-                setTimeout(() => {
-                    connection.setAttribute('stroke-opacity', opacity);
-                }, 200);
-
-                // Update the max strength for this connection
-                connection.dataset.maxStrength = maxStrength.toFixed(4);
-            });
-
-            // // Update the info display for the currently selected element (if it's a connection)
-            if (selectedElement && selectedElement.classList.contains('connection')) {
-                showInfo({ target: selectedElement });
-            }
-        }
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Add event listeners and draw
@@ -984,18 +1017,87 @@
 
         document.getElementById('btn-forward-pass').addEventListener('click', animateForwardPass);
         document.getElementById('btn-backward-pass').addEventListener('click', animateBackwardPass);
-        document.getElementById('btn-concurrent-play').addEventListener('click', concurrentPlay);
-        document.getElementById('btn-time-locked-play').addEventListener('click', timeLockedPlay);
-        document.getElementById('btn-shock-weights').addEventListener('click', shockWeights);
 
-        drawNetwork();
+        btnPlayPause.addEventListener('click', function (event) {
+            isRunningOptimization = !isRunningOptimization;
+            this.querySelector('span').textContent = isRunningOptimization ? '⏸' : '▶';
+
+            if (isRunningOptimization) {
+                trainModel();
+            }
+
+            const buttonsDisableRunning = ['btn-reset-mlp', 'btn-shock-weights', 'btn-step', 'btn-fwd-backprop-update'];
+            buttonsDisableRunning.forEach(id => {
+                const button = document.getElementById(id);
+                button.disabled = isRunningOptimization;
+            });
+            showInfo(event);
+        });
+
+        btnPlayPause.addEventListener('mouseover', showInfo);
+        btnPlayPause.addEventListener('mouseout', clearInfo);
+        // addEventListeners(btnPlayPauseContent);
+
+
+
+        btnFwdBackUp.addEventListener('click', function () {
+            switch (optimizationStateName) {
+                case 'forward':
+                    optimizationStateName = 'backprop';
+                    this.textContent = '←';
+                    break;
+                case 'backprop':
+                    optimizationStateName = 'update';
+                    this.textContent = '↑';
+                    break;
+                case 'update':
+                    optimizationStateName = 'forward';
+                    this.textContent = '→';
+                    break;
+            }
+            showInfo({ target: this });
+        });
+        btnFwdBackUp.addEventListener('mouseover', showInfo);
+        btnFwdBackUp.addEventListener('mouseout', clearInfo);
+
+
+        document.getElementById('btn-reset-mlp').addEventListener('click', function () {
+            resetMLP();
+            showInfo({ target: this });
+        });
+
+        document.getElementById('btn-shock-weights').addEventListener('click', function () {
+            mlp.shockWeights();
+            animateShockWeights();
+            showInfo({ target: this });
+        });
+
+        document.getElementById('btn-step').addEventListener('click', function () {
+            // Implement the step functionality here
+            console.log('Step button clicked');
+            showInfo({ target: this });
+        });
+
+        // Add mouseover and mouseout event listeners for the new buttons
+        ['btn-reset-mlp', 'btn-shock-weights', 'btn-step'].forEach(id => {
+            const button = document.getElementById(id);
+            button.addEventListener('mouseover', showInfo);
+            button.addEventListener('mouseout', clearInfo);
+        });
+
+        // drawNetwork();
         window.onload = function () {
-            document.getElementById('layerInput').value = initialLayers;
+            // document.getElementById('layerInput').value = initialLayers;
+            // document.getElementById('layerInput').value = initialLayers.slice(1, -1).join(', ');
+            document.getElementById('layerInput').value = initialHidden;
+            // resetTrainingDisplay();
+            // epoch = 0;
+            resetData();
+            resetMLP();
+
         };
 
     </script>
 </body>
 
 </html>
-<!-- WIP -->
-<!-- Author: Arno Khachatourian, arno.kha@gmail.com -->

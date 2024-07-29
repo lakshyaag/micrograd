@@ -228,7 +228,7 @@ class MLP extends Module {
         for (const layer of this.layers) {
             x = layer.call(x);
         }
-        return x;
+        return Array.isArray(x) ? x : [x]; // Ensure the output is always an array
     }
 
     parameters() {
