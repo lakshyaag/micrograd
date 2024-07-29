@@ -373,12 +373,15 @@
         let selectedElement = null;
         const svg = document.getElementById('network');
         // const info = document.getElementById('info');
+        const MAX_LAYER_SIZE = 16;
+        const MAX_N_LAYERS_HIDDEN = 5;
         const initialHidden = "16,"
         const initialLayers = `[2, ${initialHidden} 3]`
         // const initialLayers = "[2, 10, 10, 3]"
         layerDims = JSON.parse(initialLayers)
         let svgWidth, svgHeight;
 
+        const valInterval = 10; // interval for calculating validation loss
 
         const LATEX_FONT_SIZE = 16;
         const LATEX_COLOR = '#999';
@@ -447,19 +450,27 @@
         function updateNetwork() {
             let input = document.getElementById('layerDimInput').value.trim();
             try {
-                // Add trailing comma if missing
-                if (!input.endsWith(',')) {
-                    input += ',';
+                let cleanedInput;
+                let newLayers;
+                if (input == "") {
+                    cleanedInput = "";
+                    newLayers = [2, 3];
+                } else {
+                    // Add trailing comma if missing
+                    if (!input.endsWith(',')) {
+                        input += ',';
+                    }
+                    cleanedInput = input.replace(/,\s*$/, ',').trim(); // Ensure single trailing comma
+                    newLayers = JSON.parse(`[2, ${cleanedInput} 3]`);
                 }
-                const cleanedInput = input.replace(/,\s*$/, ',').trim(); // Ensure single trailing comma
-                const newLayers = JSON.parse(`[2, ${cleanedInput} 3]`);
-                if (Array.isArray(newLayers) && newLayers.length >= 3 && newLayers.length <= 10 && newLayers.every(n => n <= 16)) {
+                console.log("h3")
+                if (Array.isArray(newLayers) && newLayers.length >= 2 && newLayers.length <= MAX_N_LAYERS_HIDDEN+2 && newLayers.every(n => n <= MAX_LAYER_SIZE)) {
                     layerDims = newLayers;
                     resetMLP();
                     // Update the input field to reflect the correct interpretation
                     document.getElementById('layerDimInput').value = cleanedInput;
                 } else {
-                    alert('Invalid input. Please use format n1, n2, .. with max 8 hidden layers and max 16 nodes per layer.');
+                    alert(`Invalid input. Please use format n1, n2, .. with max ${MAX_N_LAYERS_HIDDEN} hidden layers and max ${MAX_LAYER_SIZE} nodes per layer.`);
                 }
             } catch (e) {
                 alert('Invalid input. Please use format n1, n2, ..');
@@ -605,48 +616,7 @@
             }
         }
 
-        function showDataPointInfo(event) {
-            const target = event.target;
-            const content = `**${target.dataset.set}** Data Point\n
-                Coordinates: (${target.dataset.x0}, ${target.dataset.x1})
-                Actual Label: ${target.dataset.actualLabel}
-                Predicted Label: ${target.dataset.predictedLabel}\n
-                ${target.dataset.isHit === 'true' ? '**Correct** Prediction' : '**INCORRECT** Prediction'}
-            `;
-            renderInfoContent(infoElement, content);
-        }
 
-        function showReportingInfo(event) {
-            const target = event.currentTarget;
-            let content = '';
-
-            function formatLossForLatex(lossValue) {
-        if (lossValue === 'N/A') return 'N/A';
-        const number = parseFloat(lossValue);
-        if (isNaN(number)) return 'N/A';
-        
-        // Format to scientific notation with 5 decimal places
-        let [coefficient, exponent] = number.toExponential(3).split('e');
-        
-        // Remove leading '+' from exponent if present
-        exponent = parseInt(exponent);
-        
-        // Format for LaTeX
-        return `${coefficient} \\times 10^{${exponent}}`;
-    }
-
-    if (target.id === 'epoch-display') {
-        content = "An **epoch** is one complete pass through the entire training dataset. It represents a full cycle of training where the model has seen and learned from all available training examples once.";
-    } else if (target.id === 'train-loss-display') {
-        const trainLoss = formatLossForLatex(document.getElementById('train-loss-value').textContent);
-        content = `**Train Loss**: The average loss (error) of the model on the training dataset.\n\nLower values indicate better performance on the training data.\n\nCurrent value: $$ ${trainLoss}$$`;
-    } else if (target.id === 'val-loss-display') {
-        const valLoss = formatLossForLatex(document.getElementById('val-loss-value').textContent);
-        content = `**Validation Loss**: The average loss (error) of the model on the validation dataset.\n\nThis helps assess how well the model generalizes to unseen data.\n\nCurrent value: $$ ${valLoss}$$.`;
-    }
-
-            renderInfoContent(infoElement, content);
-        }
 
 
         function updateDataPlot() {
@@ -710,10 +680,64 @@
                 content = `\"Shock\" the weights: perturb the weight parameters by adding a small amount of random uniform noise between $$[-${shockNoiseScale}, ${shockNoiseScale}]$$.`;
             } else if (target.id === 'btn-step') {
                 content = "Run one full epoch of the training loop and show network animations illustrating the forward pass, backpropagation of gradients, and update of the weights.";
+            } else if (target.id === 'layerDimInput') {
+                content = "Enter the dimensions of hidden layers, separated by commas.\n\nInput must be comma-separated integers. Maximum " + MAX_N_LAYERS_HIDDEN + " hidden layers and " + MAX_LAYER_SIZE + " neurons per layer.\n\nFor example, $$16,8$$ creates two hidden layers with 16 and 8 neurons respectively.";
+            } else if (target.id === 'btn-edit-dims') {
+                content = "Initialize a new network with the given dimensions.\n\nThis will reset all weights and biases to new random values based on the specified layer structure and the Uniform Xavier Initialization.";
             }
+
+
             renderInfoContent(infoElement, content);
         }
 
+        function showDataPointInfo(event) {
+            const target = event.target;
+            const isTraining = target.dataset.set === "Training";
+            const calculationFrequency = isTraining
+                ? "Updated every epoch"
+                : `Updated every ${valInterval} epochs`;
+
+            const content = `**${target.dataset.set}** Data Point (${calculationFrequency})\n
+        Coordinates: (${target.dataset.x0}, ${target.dataset.x1})
+        Actual Label: ${target.dataset.actualLabel}
+        Predicted Label: ${target.dataset.predictedLabel}\n
+        ${target.dataset.isHit === 'true' ? '**Correct** Prediction' : '**INCORRECT** Prediction'}
+    `;
+            renderInfoContent(infoElement, content);
+        }
+
+
+        function showReportingInfo(event) {
+            const target = event.currentTarget;
+            let content = '';
+
+            function formatLossForLatex(lossValue) {
+                if (lossValue === 'N/A') return 'N/A';
+                const number = parseFloat(lossValue);
+                if (isNaN(number)) return 'N/A';
+
+                // Format to scientific notation with 5 decimal places
+                let [coefficient, exponent] = number.toExponential(3).split('e');
+
+                // Remove leading '+' from exponent if present
+                exponent = parseInt(exponent);
+
+                // Format for LaTeX
+                return `${coefficient} \\times 10^{${exponent}}`;
+            }
+
+            if (target.id === 'epoch-display') {
+                content = "An **epoch** is one complete pass through the entire training dataset. It represents a full cycle of training where the model has seen and learned from all available training examples once.";
+            } else if (target.id === 'train-loss-display') {
+                const trainLoss = formatLossForLatex(document.getElementById('train-loss-value').textContent);
+                content = `**Training Loss**: The average loss (error) of the model on the training dataset.\n\nLower values indicate better performance on the training data.\n\nCurrent value: $$ ${trainLoss}$$`;
+            } else if (target.id === 'val-loss-display') {
+                const valLoss = formatLossForLatex(document.getElementById('val-loss-value').textContent);
+                content = `**Validation Loss**: The average loss (error) of the model on the validation dataset.\n\nThis helps assess how well the model generalizes to unseen data.\n\nCurrent value: $$ ${valLoss}$$.`;
+            }
+
+            renderInfoContent(infoElement, content);
+        }
 
         function clearInfo(event) {
             if (!selectedElement) {
@@ -1426,6 +1450,11 @@
             button.addEventListener('mouseover', showInfo);
             button.addEventListener('mouseout', clearInfo);
         });
+
+        document.getElementById('layerDimInput').addEventListener('mouseover', showInfo);
+        document.getElementById('layerDimInput').addEventListener('mouseout', clearInfo);
+        document.getElementById('btn-edit-dims').addEventListener('mouseover', showInfo);
+        document.getElementById('btn-edit-dims').addEventListener('mouseout', clearInfo);
 
         // drawNetwork();
         window.onload = function () {
