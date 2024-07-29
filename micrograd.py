@@ -169,7 +169,7 @@ class Layer(Module):
 
     def __call__(self, x):
         out = [n(x) for n in self.neurons]
-        return out[0] if len(out) == 1 else out
+        return out
 
     def parameters(self):
         return [p for n in self.neurons for p in n.parameters()]
@@ -186,8 +186,6 @@ class MLP(Module):
     def __call__(self, x):
         for layer in self.layers:
             x = layer(x)
-            if not isinstance(x, list):
-                x = [x]
         return x
 
     def parameters(self):
@@ -235,7 +233,7 @@ def eval_split(model, split):
 train_split, val_split, test_split = gen_data(random, n=100)
 
 # init the model: 2D inputs, 16 neurons, 3 outputs (logits)
-model = MLP(2, [1, 3, 3])
+model = MLP(2, [16, 3])
 
 # optimize using Adam
 learning_rate = 1e-1

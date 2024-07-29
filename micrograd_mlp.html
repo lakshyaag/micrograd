@@ -37,13 +37,13 @@
 
         #info-container {
             /* flex: 1; */
-            padding: 20px;
+            padding: 15px;
             overflow-y: auto;
         }
 
         #controls-container {
             flex: 1;
-            padding: 20px;
+            padding: 15px 20px;
             overflow-y: auto;
         }
 
@@ -72,9 +72,16 @@
             border: 1px solid #ccc;
         }
 
-        #layerInput {
-            width: 60px;
+        #layerDimInput {
+            width: 75px;
             font-size: 16px;
+            font-weight: 500;
+            border: 0;
+            background-color: #dbf4ff33;
+        }
+
+        #layerDimInput:hover {
+            outline: 1px solid navy;
         }
 
         .layer:hover rect {
@@ -131,7 +138,7 @@
         #button-group-container {
             display: flex;
             justify-content: center;
-            margin-top: 20px;
+            margin-top: 10px;
         }
 
         #button-group {
@@ -146,7 +153,20 @@
             cursor: pointer;
             border: none;
             border-radius: 5px;
-            background-color: #fff;
+            background-color: transparent;
+            color: navy;
+        }
+
+        #btn-edit-dims {
+            margin: 0 10px;
+            padding: 8px 12px;
+            font-size: 14px;
+            cursor: pointer;
+            /* border: 1px solid rgba(0, 0, 128, 0.4); */
+            border: 0;
+            box-shadow: 0 1px 4px 0 rgba(31, 38, 135, 0.2);
+            border-radius: 5px;
+            background-color: transparent;
             color: navy;
         }
 
@@ -169,8 +189,9 @@
             height: 40px;
         }
 
-        #button-group button:hover {
-            background-color: #d1eaeb;
+        #button-group button:hover,
+        #btn-edit-dims:hover {
+            background-color: #e0f1f2;
         }
 
         #button-group button:disabled {
@@ -219,9 +240,9 @@
             <div id="controls-container">
                 <div id="controls">
                     <span>[2, </span>
-                    <input type="text" id="layerInput">
+                    <input type="text" id="layerDimInput">
                     <span> 3]</span>
-                    <button onclick="updateNetwork()">Edit hidden layer dimensions</button>
+                    <button id="btn-edit-dims" onclick="updateNetwork()">Edit hidden layer dimensions</button>
                 </div>
                 <div id="animation-controls">
                     <h4>note: all explanations in the info box are WIP</h4>
@@ -272,6 +293,7 @@
         const shockNoiseScale = 0.3; // Adjust this value to control the magnitude of the shock
 
         const btnPlayPause = document.getElementById('btn-play-pause');
+        const btnStep = document.getElementById('btn-step');
         // const btnPlayPauseContent = document.getElementById('btn-play-pause-content');
         const btnResetMLP = document.getElementById('btn-reset-mlp');
         const btnFwdBackUp = document.getElementById('btn-fwd-backprop-update');
@@ -339,12 +361,15 @@
             mlp = new MLP(inputSize, hiddenLayers.concat(outputSize));
             resetAdamMLP();
 
-            resetTrainingDisplay();
+            currentTrainingStage = 0;
             epoch = 0;
+            resetTrainingDisplay();
+            updateButtonState(btnFwdBackUp, currentTrainingStage);
         }
 
+
         function updateNetwork() {
-            let input = document.getElementById('layerInput').value.trim();
+            let input = document.getElementById('layerDimInput').value.trim();
             try {
                 // Add trailing comma if missing
                 if (!input.endsWith(',')) {
@@ -356,7 +381,7 @@
                     layerDims = newLayers;
                     resetMLP();
                     // Update the input field to reflect the correct interpretation
-                    document.getElementById('layerInput').value = cleanedInput;
+                    document.getElementById('layerDimInput').value = cleanedInput;
                 } else {
                     alert('Invalid input. Please use format n1, n2, .. with max 8 hidden layers and max 16 nodes per layer.');
                 }
@@ -421,10 +446,11 @@
                         content = "**Forward pass**: run inference/prediction on the input data to produce predictions $$\\hat{y}$$ and calculate loss with respect to the true output values $$y$$.";
                         break;
                     case 'backprop':
-                        content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers. We are able to accomplish this using the chain rule from calculus ($$\\dfrac{dL}{dW_{l}} → \\dfrac{dL}{dW_{l-1}} → ... → \\dfrac{dL}{dW_{1}}$$, where $$l$$ is the number of layers in our MLP)";
+                        // content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers. We are able to accomplish this using the chain rule from calculus ($$\\dfrac{dL}{dW_{l}} → \\dfrac{dL}{dW_{l-1}} → ... → \\dfrac{dL}{dW_{1}}$$, where $$l$$ is the number of layers in our MLP)";
+                        content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers. We are able to accomplish this using the chain rule from calculus.";
                         break;
                     case 'update':
-                        content = "**Update weights**: Use the gradient information to update the weights $$ W $$ of the network based on our optimization algorithm (AdamW in this case) and hyperparameters (e.g. learning rate, weight decay), with the goal of nudging this network towards being able to better predict the output given the input. Then, zero out the gradients to prepare for the next step.";
+                        content = "**Update weights**: Use the gradient information to update the weights $$ W $$ of the network based on our optimization algorithm (AdamW in this case) and hyperparameters (e.g. learning rate, weight decay), with the goal of nudging this network towards better predictions of the output given the input. We also zeros out the gradients to prepare for the next step.";
                         break;
                 }
             } else if (target.id === 'btn-reset-mlp') {
@@ -666,19 +692,21 @@
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Micrograd MLP
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        let currentTrainingStage = 0; // 0: forward, 1: backward, 2: update
 
 
-
-        function trainModel() {
+        function trainModelStep(stage, fullStep = false) {
             if (!mlp) {
                 console.error("MLP not initialized");
                 return;
             }
 
-            const reportingContainer = document.getElementById('reporting-container');
+            if (fullStep) {
+                // in case we are partway through a cycle, reset stage and grad
+                currentTrainingStage = 0;
+                mlp.zeroGrad();
+                updateButtonState(btnFwdBackUp, currentTrainingStage);
 
-            function trainingStep() {
-                if (!isRunningOptimization) return;
 
                 // evaluate the validation split every few steps
                 if (epoch % 10 === 0) {
@@ -708,14 +736,65 @@
                 mlp.zeroGrad();
                 updateTrainingDisplay(epoch, loss.data, null);
 
-                // reportingContainer.innerHTML += `<p>Epoch ${epoch}, Train Loss: ${loss.data.toFixed(20)}</p>`;
-
                 epoch++;
-                // trainingStep();
-                requestAnimationFrame(trainingStep);
+            } else {
+                switch (stage) {
+                    case 0: // Forward pass
+                        if (epoch % 10 === 0) {
+                            const val_loss = evalSplit(mlp, val_split);
+                            updateTrainingDisplay(epoch, null, val_loss);
+                        }
+
+                        loss = new Value(0);
+                        for (const [x, y] of train_split) {
+                            const logits = mlp.call([new Value(x[0]), new Value(x[1])]);
+                            loss = loss.add(crossEntropy(logits, y));
+                        }
+                        loss = loss.mul(1.0 / train_split.length);
+                        updateTrainingDisplay(epoch, loss.data, null);
+                        break;
+
+                    case 1: // Backward pass
+                        if (loss) {
+                            loss.backward();
+                        } else {
+                            console.error("No loss computed. Run forward pass first.");
+                        }
+                        break;
+
+                    case 2: // Update
+                        for (const p of mlp.parameters()) {
+                            p.m = beta1 * p.m + (1 - beta1) * p.grad;
+                            p.v = beta2 * p.v + (1 - beta2) * Math.pow(p.grad, 2);
+                            const m_hat = p.m / (1 - Math.pow(beta1, epoch + 1));
+                            const v_hat = p.v / (1 - Math.pow(beta2, epoch + 1));
+                            p.data -= learning_rate * (m_hat / (Math.sqrt(v_hat) + eps) + weight_decay * p.data);
+                        }
+                        mlp.zeroGrad();
+                        epoch++;
+                        break;
+                }
+                currentTrainingStage = (stage + 1) % 3;
+                updateButtonState(btnFwdBackUp, currentTrainingStage);
             }
-            // Start the training loop
-            trainingStep();
+        }
+
+
+        function trainModel(state) {
+            function trainingLoop() {
+                if (!isRunningOptimization) return;
+
+                trainModelStep(state, true);
+
+                if (currentTrainingStage === 0) {
+                    // We've completed a full cycle, request the next frame
+                    requestAnimationFrame(trainingLoop);
+                } else {
+                    // We're in the middle of a cycle, continue immediately
+                    trainingLoop();
+                }
+            }
+            trainingLoop();
         }
 
         class RNG {
@@ -933,7 +1012,6 @@
 
         class MLP extends Module {
             constructor(nin, nouts) {
-                logMessage(nouts)
                 super();
                 const sz = [nin, ...nouts];
                 this.layers = sz.slice(0, -1).map((s, i) => new Layer(s, sz[i + 1], { nonlin: i !== nouts.length - 1 }));
@@ -943,8 +1021,9 @@
             call(x) {
                 for (const layer of this.layers) {
                     x = layer.call(x);
+                    x = Array.isArray(x) ? x : [x]
                 }
-                return Array.isArray(x) ? x : [x]; // Ensure the output is always an array
+                return x
             }
 
             parameters() {
@@ -998,7 +1077,22 @@
             return loss.data;
         }
 
-
+        function updateButtonState(button, stage) {
+            switch (stage) {
+                case 0:
+                    button.textContent = '→';
+                    optimizationStateName = 'forward';
+                    break;
+                case 1:
+                    button.textContent = '←';
+                    optimizationStateName = 'backprop';
+                    break;
+                case 2:
+                    button.textContent = '↑';
+                    optimizationStateName = 'update';
+                    break;
+            }
+        }
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Add event listeners and draw
@@ -1015,15 +1109,12 @@
 
         document.querySelectorAll('.node, .connection, .layer, .latex-label').forEach(addEventListeners);
 
-        document.getElementById('btn-forward-pass').addEventListener('click', animateForwardPass);
-        document.getElementById('btn-backward-pass').addEventListener('click', animateBackwardPass);
-
         btnPlayPause.addEventListener('click', function (event) {
             isRunningOptimization = !isRunningOptimization;
             this.querySelector('span').textContent = isRunningOptimization ? '⏸' : '▶';
 
             if (isRunningOptimization) {
-                trainModel();
+                trainModel(currentTrainingStage);
             }
 
             const buttonsDisableRunning = ['btn-reset-mlp', 'btn-shock-weights', 'btn-step', 'btn-fwd-backprop-update'];
@@ -1034,52 +1125,24 @@
             showInfo(event);
         });
 
-        btnPlayPause.addEventListener('mouseover', showInfo);
-        btnPlayPause.addEventListener('mouseout', clearInfo);
-        // addEventListeners(btnPlayPauseContent);
-
-
-
-        btnFwdBackUp.addEventListener('click', function () {
-            switch (optimizationStateName) {
-                case 'forward':
-                    optimizationStateName = 'backprop';
-                    this.textContent = '←';
-                    break;
-                case 'backprop':
-                    optimizationStateName = 'update';
-                    this.textContent = '↑';
-                    break;
-                case 'update':
-                    optimizationStateName = 'forward';
-                    this.textContent = '→';
-                    break;
-            }
+        btnStep.addEventListener('click', function () {
+            trainModelStep(currentTrainingStage, true);
+            updateButtonState(btnFwdBackUp, currentTrainingStage);
             showInfo({ target: this });
         });
-        btnFwdBackUp.addEventListener('mouseover', showInfo);
-        btnFwdBackUp.addEventListener('mouseout', clearInfo);
 
-
-        document.getElementById('btn-reset-mlp').addEventListener('click', function () {
-            resetMLP();
+        btnFwdBackUp.addEventListener('click', function () {
+            trainModelStep(currentTrainingStage, false);
+            updateButtonState(this, currentTrainingStage);
             showInfo({ target: this });
         });
 
         document.getElementById('btn-shock-weights').addEventListener('click', function () {
             mlp.shockWeights();
-            animateShockWeights();
-            showInfo({ target: this });
-        });
-
-        document.getElementById('btn-step').addEventListener('click', function () {
-            // Implement the step functionality here
-            console.log('Step button clicked');
-            showInfo({ target: this });
         });
 
         // Add mouseover and mouseout event listeners for the new buttons
-        ['btn-reset-mlp', 'btn-shock-weights', 'btn-step'].forEach(id => {
+        ['btn-reset-mlp', 'btn-shock-weights', 'btn-step', 'btn-fwd-backprop-update', 'btn-play-pause'].forEach(id => {
             const button = document.getElementById(id);
             button.addEventListener('mouseover', showInfo);
             button.addEventListener('mouseout', clearInfo);
@@ -1087,14 +1150,9 @@
 
         // drawNetwork();
         window.onload = function () {
-            // document.getElementById('layerInput').value = initialLayers;
-            // document.getElementById('layerInput').value = initialLayers.slice(1, -1).join(', ');
-            document.getElementById('layerInput').value = initialHidden;
-            // resetTrainingDisplay();
-            // epoch = 0;
+            document.getElementById('layerDimInput').value = initialHidden;
             resetData();
             resetMLP();
-
         };
 
     </script>
