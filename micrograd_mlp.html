@@ -13,8 +13,19 @@
         }
 
         #reporting-container {
-            display: block;
-            /* justify-content: center; */
+            font-size: 16px;
+            line-height: 1.5;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 20px;
+        }
+
+        .loss-display {
+            display: flex;
+        }
+
+        .loss-label {
+            width: 250px;
+            /* Adjust this value as needed */
         }
 
         #main-container {
@@ -37,14 +48,24 @@
 
         #info-container {
             /* flex: 1; */
+            min-height: 350px;
             padding: 15px;
             overflow-y: auto;
         }
 
-        #controls-container {
+        .container {
+            display: flex;
+            justify-content: center;
+        }
+
+        #controls {
+            padding: 0 20px;
+        }
+
+        #bottom-right-container {
             flex: 1;
             padding: 15px 20px;
-            overflow-y: auto;
+            overflow-y: visible;
         }
 
         #info {
@@ -200,6 +221,52 @@
             background-color: #eee;
         }
 
+        /* Data plot */
+        #data-visualization {
+            margin-top: 30px;
+        }
+
+        #data-plot {
+            border: 1px solid #ccc;
+        }
+
+        .data-point {
+            stroke-width: 2;
+            fill: none;
+        }
+
+        .data-point.hit {
+            fill-opacity: 0.3;
+        }
+
+        /* .data-point.train {} */
+
+        .data-point.val {
+            stroke: #999;
+            stroke-width: 2;
+        }
+
+        .data-point.miss {
+            fill-opacity: 1;
+        }
+
+        .label-missing {
+            fill: gray;
+            fill-opacity: 1;
+        }
+
+        .label-0 {
+            fill: navy;
+        }
+
+        .label-1 {
+            fill: gold;
+        }
+
+        .label-2 {
+            fill: red;
+        }
+
 
         /* TODO RM */
         #animation-controls {
@@ -237,35 +304,34 @@
                     </div>
                 </div>
             </div>
-            <div id="controls-container">
+            <div id="bottom-right-container">
                 <div id="controls">
                     <span>[2, </span>
                     <input type="text" id="layerDimInput">
                     <span> 3]</span>
                     <button id="btn-edit-dims" onclick="updateNetwork()">Edit hidden layer dimensions</button>
                 </div>
-                <div id="animation-controls">
-                    <h4>note: all explanations in the info box are WIP</h4>
-                    <h4>test animations (done?)</h4>
-                    <button id="btn-shock-weights">Test Shock Weights</button>
-                    <h4>test animations (WIP)</h4>
-                    <button id="btn-forward-pass">Test Forward Pass</button>
-                    <button id="btn-backward-pass">Test Backward Pass</button>
-                    <h4>todo animations</h4>
-                    <button id="btn-concurrent-play">Test Step</button>
-                    <button id="btn-concurrent-play">Test Optimize (free)</button>
-                    <button id="btn-time-locked-play">Test Optimize (time synced)</button>
+                <div class="container">
+                    <div id="data-visualization">
+                        <svg id="data-plot" width="380" height="380"></svg>
+                    </div>
                 </div>
             </div>
-
         </div>
     </div>
     <div id="reporting-container">
         <div id="epoch-display">Epoch: 0</div>
-        <div id="train-loss-display">Train Loss: N/A</div>
-        <div id="val-loss-display">Validation Loss: N/A</div>
+        <div id="train-loss-display" class="loss-display">
+            <span class="loss-label">Train Loss:</span>
+            <span id="train-loss-value">N/A</span>
+        </div>
+        <div id="val-loss-display" class="loss-display">
+            <span class="loss-label">Validation Loss:</span>
+            <span id="val-loss-value">N/A</span>
+        </div>
         <div id="log-container"></div>
     </div>
+
 
 
 
@@ -277,11 +343,14 @@
         let mlp;
         let layerDims;
         let train_split, val_split, test_split;
+        let predsTrain, predsVal;
 
         let isRunningOptimization = false;
         // let isReadyBackprop = false;
         let optimizationStateName = 'forward';
         let epoch = 0;
+
+        let currentTrainingStage = 0; // 0: forward, 1: backward, 2: update
 
         // AdamW
         let learning_rate = 1e-1;
@@ -290,7 +359,7 @@
         let weight_decay = 1e-4;
         const eps = 1e-8;
 
-        const shockNoiseScale = 0.3; // Adjust this value to control the magnitude of the shock
+        const shockNoiseScale = 0.5; // Adjust this value to control the magnitude of the shock
 
         const btnPlayPause = document.getElementById('btn-play-pause');
         const btnStep = document.getElementById('btn-step');
@@ -308,8 +377,9 @@
         const initialLayers = `[2, ${initialHidden} 3]`
         // const initialLayers = "[2, 10, 10, 3]"
         layerDims = JSON.parse(initialLayers)
-        const svgWidth = 1200;
-        const svgHeight = 700;
+        let svgWidth, svgHeight;
+
+
         const LATEX_FONT_SIZE = 16;
         const LATEX_COLOR = '#999';
         const LATEX_COLOR_LOSS = '#666';
@@ -349,10 +419,13 @@
 
         function resetData() {
             [train_split, val_split, test_split] = gen_data(random, 100);
-
             resetTrainingDisplay();
             epoch = 0;
+            predsTrain = [];
+            predsVal = [];
+            updateDataPlot();
         }
+
 
         function resetMLP() {
             const inputSize = layerDims[0];
@@ -365,6 +438,9 @@
             epoch = 0;
             resetTrainingDisplay();
             updateButtonState(btnFwdBackUp, currentTrainingStage);
+            predsTrain = [];
+            predsVal = [];
+            updateDataPlot();
         }
 
 
@@ -390,14 +466,18 @@
             }
         }
 
+        function updateSvgDimensions() {
+            const dimensions = getSvgDimensions();
+            svgWidth = dimensions.width;
+            svgHeight = dimensions.height;
+        }
+
 
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw the MLP
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         function drawNetwork() {
-            // n_layers = 
-            // algo: start with nin. create
             svg.innerHTML = '';
 
             if (!mlp) {
@@ -423,6 +503,177 @@
 
 
         // function drawYConnections(layerIndex, x, layerGap) {
+
+
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Draw data points
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function drawGrid() {
+            const svg = document.getElementById('data-plot');
+            const width = parseInt(svg.getAttribute('width'));
+            const height = parseInt(svg.getAttribute('height'));
+
+            // Function to create a line element
+            function createLine(x1, y1, x2, y2) {
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', x1);
+                line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2);
+                line.setAttribute('y2', y2);
+                line.setAttribute('stroke', '#eee');
+                line.setAttribute('stroke-width', '1');
+                return line;
+            }
+
+            // Draw center lines
+            svg.appendChild(createLine(0, height / 2, width, height / 2));
+            svg.appendChild(createLine(width / 2, 0, width / 2, height));
+
+            // Draw ticks
+            for (let i = 1; i <= 3; i++) {
+                const x = (width / 4) * i;
+                const y = (height / 4) * i;
+                svg.appendChild(createLine(x, height / 2 - 5, x, height / 2 + 5));
+                svg.appendChild(createLine(width / 2 - 5, y, width / 2 + 5, y));
+            }
+        }
+
+        function plotDataPoints(svg, dataPoints, predictions, isTrainingSet, dataPointSize = 5) {
+            const width = parseInt(svg.getAttribute('width'));
+            const height = parseInt(svg.getAttribute('height'));
+            const dataMinX = -2;
+            const dataMaxX = 2;
+            const dataMinY = -2;
+            const dataMaxY = 2;
+            const scaleX = width / 4;
+            const scaleY = height / 4;
+
+            for (let i = 0; i < dataPoints.length; i++) {
+                const [x, y] = dataPoints[i];
+
+                const cx = (x[0] - dataMinX) * scaleX;
+                const cy = height - (x[1] - dataMinY) * scaleY;
+
+                const label = y;
+                let predictedLabel;
+                if (predictions && predictions[i] !== undefined) {
+                    predictedLabel = predictions[i];
+                } else {
+                    predictedLabel = "missing";
+                }
+                const isHit = predictedLabel === y;
+                let shape;
+                switch (label) {
+                    case 0:
+                        shape = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                        shape.setAttribute('cx', cx);
+                        shape.setAttribute('cy', cy);
+                        shape.setAttribute('r', dataPointSize);
+                        break;
+                    case 1:
+                        shape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        shape.setAttribute('x', cx - dataPointSize);
+                        shape.setAttribute('y', cy - dataPointSize);
+                        shape.setAttribute('width', dataPointSize * 2);
+                        shape.setAttribute('height', dataPointSize * 2);
+                        break;
+                    case 2:
+                        shape = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                        const adjSz = dataPointSize + 1 // make triangles slightly bigger
+                        shape.setAttribute('points', `${cx},${cy - adjSz} ${cx - adjSz},${cy + adjSz} ${cx + adjSz},${cy + adjSz}`);
+                        break;
+                    default:
+                        console.error('Unknown label:', label);
+                        continue;
+                }
+
+                shape.setAttribute('class', `data-point ${isHit ? 'hit' : 'miss'} label-${predictedLabel} ${isTrainingSet ? 'train' : 'val'}`);
+
+                // Add data attributes for showInfo
+                shape.dataset.x0 = x[0].toFixed(2);
+                shape.dataset.x1 = x[1].toFixed(2);
+                shape.dataset.actualLabel = label;
+                shape.dataset.predictedLabel = predictedLabel;
+                shape.dataset.isHit = isHit;
+                shape.dataset.set = isTrainingSet ? 'Training' : 'Validation';
+
+                // Add event listeners
+                shape.addEventListener('mouseover', showDataPointInfo);
+                shape.addEventListener('mouseout', clearInfo);
+
+                svg.appendChild(shape);
+            }
+        }
+
+        function showDataPointInfo(event) {
+            const target = event.target;
+            const content = `**${target.dataset.set}** Data Point\n
+                Coordinates: (${target.dataset.x0}, ${target.dataset.x1})
+                Actual Label: ${target.dataset.actualLabel}
+                Predicted Label: ${target.dataset.predictedLabel}\n
+                ${target.dataset.isHit === 'true' ? '**Correct** Prediction' : '**INCORRECT** Prediction'}
+            `;
+            renderInfoContent(infoElement, content);
+        }
+
+        function showReportingInfo(event) {
+            const target = event.currentTarget;
+            let content = '';
+
+            function formatLossForLatex(lossValue) {
+        if (lossValue === 'N/A') return 'N/A';
+        const number = parseFloat(lossValue);
+        if (isNaN(number)) return 'N/A';
+        
+        // Format to scientific notation with 5 decimal places
+        let [coefficient, exponent] = number.toExponential(3).split('e');
+        
+        // Remove leading '+' from exponent if present
+        exponent = parseInt(exponent);
+        
+        // Format for LaTeX
+        return `${coefficient} \\times 10^{${exponent}}`;
+    }
+
+    if (target.id === 'epoch-display') {
+        content = "An **epoch** is one complete pass through the entire training dataset. It represents a full cycle of training where the model has seen and learned from all available training examples once.";
+    } else if (target.id === 'train-loss-display') {
+        const trainLoss = formatLossForLatex(document.getElementById('train-loss-value').textContent);
+        content = `**Train Loss**: The average loss (error) of the model on the training dataset.\n\nLower values indicate better performance on the training data.\n\nCurrent value: $$ ${trainLoss}$$`;
+    } else if (target.id === 'val-loss-display') {
+        const valLoss = formatLossForLatex(document.getElementById('val-loss-value').textContent);
+        content = `**Validation Loss**: The average loss (error) of the model on the validation dataset.\n\nThis helps assess how well the model generalizes to unseen data.\n\nCurrent value: $$ ${valLoss}$$.`;
+    }
+
+            renderInfoContent(infoElement, content);
+        }
+
+
+        function updateDataPlot() {
+            const svg = document.getElementById('data-plot');
+            const width = parseInt(svg.getAttribute('width'));
+            const height = parseInt(svg.getAttribute('height'));
+            // Input range
+            const dataMinX = -2;
+            const dataMaxX = 2;
+            const dataMinY = -2;
+            const dataMaxY = 2;
+            const scaleX = width / 4;
+            const scaleY = height / 4;
+
+            // Clear existing content
+            while (svg.firstChild) {
+                svg.removeChild(svg.firstChild);
+            }
+
+            drawGrid(); // Draw the grid first
+            // Plot training data
+            plotDataPoints(svg, train_split, predsTrain, true);
+
+            // Plot validation data
+            plotDataPoints(svg, val_split, predsVal, false);
+
+        }
 
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -670,119 +921,32 @@
 
         function resetTrainingDisplay() {
             document.getElementById('epoch-display').textContent = `Epoch: 0`;
-            document.getElementById('train-loss-display').textContent = `Train Loss: N/A`;
-            document.getElementById('val-loss-display').textContent = `Validation Loss: N/A`;
+            document.getElementById('train-loss-value').textContent = 'N/A';
+            document.getElementById('val-loss-value').textContent = 'N/A';
         }
+
 
         function updateTrainingDisplay(epochVal, trainLoss, valLoss) {
             document.getElementById('epoch-display').textContent = `Epoch: ${epochVal}`;
             if (trainLoss !== null) {
-                document.getElementById('train-loss-display').textContent = `Train Loss: ${trainLoss.toFixed(20)}`;
+                document.getElementById('train-loss-value').textContent = trainLoss.toFixed(20);
             }
             if (valLoss !== null) {
-                document.getElementById('val-loss-display').textContent = `Validation Loss: ${valLoss.toFixed(20)}`;
+                document.getElementById('val-loss-value').textContent = valLoss.toFixed(20);
             }
         }
+
+
 
         function logMessage(message) {
             const logContainer = document.getElementById('log-container');
             logContainer.innerHTML += `<p>${message}</p>`;
             logContainer.scrollTop = logContainer.scrollHeight;
         }
+
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        // Micrograd MLP
+        // Random Number Generation
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        let currentTrainingStage = 0; // 0: forward, 1: backward, 2: update
-
-        function resetCurrentTrainingStage() {
-            // in case we are partway through a cycle, reset stage and grad
-            currentTrainingStage = 0;
-            mlp.zeroGrad();
-            updateButtonState(btnFwdBackUp, currentTrainingStage);
-        }
-
-        function trainForward() {
-            // forward pass
-            if (epoch % 10 === 0) {
-                const val_loss = evalSplit(mlp, val_split);
-                updateTrainingDisplay(epoch, null, val_loss);
-            }
-
-            loss = new Value(0);
-            for (const [x, y] of train_split) {
-                const logits = mlp.call([new Value(x[0]), new Value(x[1])]);
-                loss = loss.add(crossEntropy(logits, y));
-            }
-            loss = loss.mul(1.0 / train_split.length);
-            updateTrainingDisplay(epoch, loss.data, null);
-        }
-
-        function trainBackward() {
-            // backward pass (deposit the gradients)
-            loss.backward();
-        }
-
-        function trainUpdate() {
-            // update with AdamW
-            for (const p of mlp.parameters()) {
-                    p.m = beta1 * p.m + (1 - beta1) * p.grad;
-                    p.v = beta2 * p.v + (1 - beta2) * Math.pow(p.grad, 2);
-                    const m_hat = p.m / (1 - Math.pow(beta1, epoch + 1));
-                    const v_hat = p.v / (1 - Math.pow(beta2, epoch + 1));
-                    p.data -= learning_rate * (m_hat / (Math.sqrt(v_hat) + eps) + weight_decay * p.data);
-                }
-                mlp.zeroGrad();
-                updateTrainingDisplay(epoch, loss.data, null);
-
-                epoch++;
-        }
-
-        function trainModelStep(stage, fullStep = false) {
-            if (!mlp) {
-                console.error("MLP not initialized");
-                return;
-            }
-
-            if (fullStep) {
-                resetCurrentTrainingStage();
-                trainForward();
-                trainBackward();
-                trainUpdate();
-            } else {
-                switch (stage) {
-                    case 0: // Forward pass
-                        trainForward();
-                        break;
-
-                    case 1: // Backward pass
-                        trainBackward();
-                        break;
-                    case 2: // Update
-                        trainUpdate();
-                        break;
-                }
-                currentTrainingStage = (stage + 1) % 3;
-                updateButtonState(btnFwdBackUp, currentTrainingStage);
-            }
-        }
-
-        function trainModel(state) {
-            function trainingLoop() {
-                if (!isRunningOptimization) return;
-
-                trainModelStep(state, true);
-
-                if (currentTrainingStage === 0) {
-                    // We've completed a full cycle, request the next frame
-                    requestAnimationFrame(trainingLoop);
-                } else {
-                    // We're in the middle of a cycle, continue immediately
-                    trainingLoop();
-                }
-            }
-            trainingLoop();
-        }
-
         class RNG {
             constructor(seed) {
                 this.state = BigInt(seed);
@@ -827,8 +991,10 @@
             return [tr, val, te];
         }
 
-        const random = new RNG(42);
 
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Micrograd MLP
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         class Value {
             // stores a single scalar value and its gradient
             constructor(data, _children = [], _op = '') {
@@ -1055,12 +1221,106 @@
         function evalSplit(model, split) {
             // evaluate the loss of a split
             let loss = new Value(0);
+            // track for plotting
+            logitsVal = [];
+            predsVal = [];
             for (const [x, y] of split) {
                 const logits = model.call([new Value(x[0]), new Value(x[1])]);
+                logitsVal.push(logits);
+                predsVal.push(argmax(logits.map(v => v.data)));
                 loss = loss.add(crossEntropy(logits, y));
             }
             loss = loss.mul(1.0 / split.length); // normalize the loss
             return loss.data;
+        }
+
+        function trainForward() {
+            // forward pass
+            if (epoch % 10 === 0) {
+                const val_loss = evalSplit(mlp, val_split);
+                updateTrainingDisplay(epoch, null, val_loss);
+            }
+
+            loss = new Value(0);
+            // track for plotting
+            logitsTrain = [];
+            predsTrain = [];
+            for (const [x, y] of train_split) {
+                const logits = mlp.call([new Value(x[0]), new Value(x[1])]);
+                logitsTrain.push(logits);
+                predsTrain.push(argmax(logits.map(v => v.data)));
+                loss = loss.add(crossEntropy(logits, y));
+            }
+            loss = loss.mul(1.0 / train_split.length);
+            updateTrainingDisplay(epoch, loss.data, null);
+
+            updateDataPlot();
+        }
+
+        function trainBackward() {
+            // backward pass (deposit the gradients)
+            loss.backward();
+        }
+
+        function trainUpdate() {
+            // update with AdamW
+            for (const p of mlp.parameters()) {
+                p.m = beta1 * p.m + (1 - beta1) * p.grad;
+                p.v = beta2 * p.v + (1 - beta2) * Math.pow(p.grad, 2);
+                const m_hat = p.m / (1 - Math.pow(beta1, epoch + 1));
+                const v_hat = p.v / (1 - Math.pow(beta2, epoch + 1));
+                p.data -= learning_rate * (m_hat / (Math.sqrt(v_hat) + eps) + weight_decay * p.data);
+            }
+            mlp.zeroGrad();
+            updateTrainingDisplay(epoch, loss.data, null);
+
+            epoch++;
+        }
+
+        function trainModelStep(stage, fullStep = false) {
+            if (!mlp) {
+                console.error("MLP not initialized");
+                return;
+            }
+
+            if (fullStep) {
+                resetCurrentTrainingStage();
+                trainForward();
+                trainBackward();
+                trainUpdate();
+            } else {
+                switch (stage) {
+                    case 0: // Forward pass
+                        trainForward();
+                        break;
+
+                    case 1: // Backward pass
+                        trainBackward();
+                        break;
+                    case 2: // Update
+                        trainUpdate();
+                        break;
+                }
+                currentTrainingStage = (stage + 1) % 3;
+                updateButtonState(btnFwdBackUp, currentTrainingStage);
+            }
+        }
+
+        function trainModel(state) {
+            function trainingLoop() {
+                if (!isRunningOptimization) return;
+
+                trainModelStep(state, true);
+
+                if (currentTrainingStage === 0) {
+                    // We've completed a full cycle, request the next frame
+                    requestAnimationFrame(trainingLoop);
+                } else {
+                    // We're in the middle of a cycle, continue immediately
+                    trainingLoop();
+                }
+            }
+            trainingLoop();
         }
 
         function updateButtonState(button, stage) {
@@ -1080,9 +1340,27 @@
             }
         }
 
+        function resetCurrentTrainingStage() {
+            // in case we are partway through a cycle, reset stage and grad
+            currentTrainingStage = 0;
+            mlp.zeroGrad();
+            updateButtonState(btnFwdBackUp, currentTrainingStage);
+        }
+
+        function argmax(array) {
+            if (array.length === 0) {
+                return -1; // Return -1 for empty array
+            }
+
+            const max = Math.max(...array);
+            return array.indexOf(max);
+        }
+
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Add event listeners and draw
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        const random = new RNG(42);
+
         svg.addEventListener('click', function (event) {
             showInfo(event);
         });
@@ -1091,6 +1369,17 @@
             element.addEventListener('mouseover', showInfo);
             element.addEventListener('mouseout', clearInfo);
             element.addEventListener('click', showInfo);
+        }
+
+        function addReportingContainerListeners() {
+            document.getElementById('epoch-display').addEventListener('mouseover', showReportingInfo);
+            document.getElementById('epoch-display').addEventListener('mouseout', clearInfo);
+
+            document.getElementById('train-loss-display').addEventListener('mouseover', showReportingInfo);
+            document.getElementById('train-loss-display').addEventListener('mouseout', clearInfo);
+
+            document.getElementById('val-loss-display').addEventListener('mouseover', showReportingInfo);
+            document.getElementById('val-loss-display').addEventListener('mouseout', clearInfo);
         }
 
         document.querySelectorAll('.node, .connection, .layer, .latex-label').forEach(addEventListeners);
@@ -1143,6 +1432,7 @@
             document.getElementById('layerDimInput').value = initialHidden;
             resetData();
             resetMLP();
+            addReportingContainerListeners();
         };
 
     </script>
