@@ -125,7 +125,7 @@
 
         /* Connections */
         .connection:hover {
-            stroke-width: 3;
+            stroke-width: 4;
             filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7));
         }
 
@@ -351,6 +351,7 @@
         let epoch = 0;
 
         let currentTrainingStage = 0; // 0: forward, 1: backward, 2: update
+        let maxStrength = 0.001;
 
         // AdamW
         let learning_rate = 1e-1;
@@ -492,10 +493,26 @@
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw the MLP
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function setMaxes() {
+            if (!mlp) {
+                return
+            }
+
+            [maxStrength, maxGradient] = mlp.parameters().reduce((max, v) => [
+                Math.max(max[0], Math.abs(v.data)),
+                Math.max(max[1], Math.abs(v.grad))
+            ], [-Infinity, -Infinity]);
+        }
+
         function drawNetwork() {
             svg.innerHTML = '';
 
             const layerGap = svgWidth / (layerDims.length + 2);
+            // get max strength and gradient of network for drawing
+            setMaxes();
+            // logMessage(maxStrength)
+            // logMessage(maxGradient)
+
 
             // draw layer rectangles, nodes, and connections for each layer
             const layerGroupWidth = 30;
@@ -534,11 +551,12 @@
                     drawBiasNode(svgX, biasY, layerIndex, layerGroup);
                 }
 
-                //
-                // TODO draw connections
-                //
-
                 svg.appendChild(layerGroup);
+
+                // Draw connections
+                if (layerIndex < layerDims.length - 1) {
+                    drawConnections(layerIndex, svgX, layerGap);
+                }
             }
 
             // Draw the additional "y" layer
@@ -568,9 +586,8 @@
 
             svg.appendChild(yLayerGroup);
 
-            // TODO
             // Draw connections between y_hat and y
-            // TODO
+            drawYConnections(layerDims.length - 1, (layerDims.length) * layerGap, layerGap);
 
             // Draw the curly brace and "loss" text
             const lastLayerX = (layerDims.length + 1) * layerGap;
@@ -622,8 +639,8 @@
             circle.addEventListener('mouseover', showInfo);
             circle.addEventListener('mouseout', clearInfo);
             // circle.addEventListener('click', showInfo);
-            // circle.addEventListener('mouseenter', handleNodeHover);
-            // circle.addEventListener('mouseleave', resetNodeHover);
+            circle.addEventListener('mouseenter', handleNodeHover);
+            circle.addEventListener('mouseleave', resetNodeHover);
         }
 
         function drawBiasNode(x, y, layerIndex, parent) {
@@ -633,10 +650,93 @@
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw connections
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        // function drawConnections(layerIndex, x, layerGap) {
+        function drawConnections(layerIndex, layerXCoord, layerGap) {
+            const currentLayer = mlp.layers[layerIndex];
+            const currentLayerSize = currentLayer.neurons.length;
+            const maxOpacity = 1;
+
+            for (let i = 0; i < currentLayerSize; i++) {
+                const neuron = currentLayer.neurons[i];
+                let toY = (i + 1) * (svgHeight / (currentLayerSize + 2));
+                if (layerIndex == layerDims.length - 2) {
+                    // y_hat, no bias
+                    toY = (i + 1) * (svgHeight / (currentLayerSize + 1));
+                }
+                // these weights project backward, meaning they describe how these neurons
+                // connect to the previous layers nodes
+                const neuronWeights = neuron.parameters()
+                const prevLayerSize = neuronWeights.length
+                // logMessage(prevLayerSize);
+
+                for (let j = 0; j < prevLayerSize; j++) {
+                    const fromY = (j + 1) * (svgHeight / (prevLayerSize + 1));
+                    const weight = neuronWeights[j];
+                    // logMessage(`(${layerXCoord}, ${fromY}) to  (${layerXCoord + layerGap}, ${toY})`)
+                    // logMessage(weight);
+
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    line.setAttribute('x1', layerXCoord);
+                    line.setAttribute('y1', fromY);
+                    line.setAttribute('x2', layerXCoord + layerGap);
+                    line.setAttribute('y2', toY);
+                    line.setAttribute('stroke', '#999');
+                    line.setAttribute('stroke-width', '1');
+
+                    const strength = weight.data;
+                    // const maxStrength = 0.3; // TODO adjust
+                    const opacity = Math.min(Math.abs(strength) / maxStrength, maxOpacity);
+                    // logMessage(`${strength}, ${opacity}, ${maxStrength}`)
+                    line.setAttribute('stroke-opacity', opacity);
+
+                    line.classList.add('connection');
+                    line.dataset.from = `${layerIndex - 1},${j}`;
+                    line.dataset.to = `${layerIndex},${i}`;
+                    line.dataset.strength = strength.toFixed(4);
+                    line.dataset.gradient = weight.grad.toFixed(4);
+
+                    svg.appendChild(line);
+
+                    line.addEventListener('mouseover', showInfo);
+                    line.addEventListener('mouseout', (event) => {
+                        clearInfo(event);
+                        resetConnectionAppearance(event);
+                    });
+                }
+            }
+        }
 
 
-        // function drawYConnections(layerIndex, x, layerGap) {
+        // function initializeGradients() {
+        //     const connections = document.querySelectorAll('.connection:not([data-to^="' + layers.length + ',"])');
+        //     connections.forEach(connection => {
+        //         connection.dataset.gradient = randomNormal().toFixed(4);
+        //     });
+        // }
+
+
+        function drawYConnections(layerIndex, x, layerGap) {
+            const currentLayer = layerDims[layerIndex];
+
+            for (let i = 0; i < currentLayer; i++) {
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', x);
+                line.setAttribute('y1', (i + 1) * (svgHeight / (currentLayer + 1)));
+                line.setAttribute('x2', x + layerGap);
+                line.setAttribute('y2', (i + 1) * (svgHeight / (currentLayer + 1)));
+                line.setAttribute('stroke', '#999');
+                line.setAttribute('stroke-width', '1');
+                line.setAttribute('stroke-dasharray', '5,5');
+
+                line.classList.add('connection');
+                line.dataset.from = `${layerIndex - 1},${i}`;
+                line.dataset.to = `${layerIndex},${i}`;
+                svg.appendChild(line);
+
+                line.addEventListener('mouseover', showInfo);
+                line.addEventListener('mouseout', clearInfo);
+                line.addEventListener('click', showInfo);
+            }
+        }
 
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -800,7 +900,7 @@
             } else if (target.id === 'btn-reset-mlp') {
                 content = "Reset the network parameters to randomly initialized values based on the Uniform Xavier initialization.";
             } else if (target.id === 'btn-shock-weights') {
-                content = `\"Shock\" the weights: perturb the weight parameters by adding a small amount of random uniform noise between $$[-${shockNoiseScale}, ${shockNoiseScale}]$$.`;
+                content = `\"Shock\" the weights: perturb the weight parameters by adding a small amount of uniform random noise between $$[-${shockNoiseScale}, ${shockNoiseScale}]$$.`;
             } else if (target.id === 'btn-step') {
                 content = "Run one full epoch of the training loop and show network animations illustrating the forward pass, backpropagation of gradients, and update of the weights.";
             } else if (target.id === 'layerDimInput') {
@@ -811,11 +911,7 @@
                 const layerIndex = parseInt(target.dataset.layer);
                 const nodeIndex = parseInt(target.dataset.node) + 1;
                 if (nodeIndex === layerDims[layerIndex] + 1) {
-                    if (layerIndex == 0) {
-                        content = `Bias node (the vector $$\\mathbf{1}$$) for the input layer`;
-                    } else {
-                        content = `Bias node (the vector $$\\mathbf{1}$$) for fully connected layer $$${layerIndex}$$`;
-                    }
+                    content = `Indentity node (the vector $$\\mathbf{1}$$).\n\nIt provides a way to add the bias term as part of the matrix multiplication, instead of seperately.`;
                 } else if (layerIndex === 0) {
                     content = `Input feature $$${nodeIndex}$$`;
                 } else if (layerIndex === layerDims.length - 1) {
@@ -824,6 +920,46 @@
                     content = `Output feature $$${nodeIndex}$$ for $$y$$`;
                 } else {
                     content = `Node in fully connected layer ${layerIndex}, index ${nodeIndex}`;
+                }
+            } else if (target.classList.contains('connection')) {
+                const [fromLayer, fromNode] = target.dataset.from.split(',');
+                const [toLayer, toNode] = target.dataset.to.split(',');
+                const fromLayerIndex = parseInt(fromLayer) + 1;
+                const toLayerIndex = parseInt(toLayer) + 1;
+                const fromNodeIndex = parseInt(fromNode) + 1;
+                const toNodeIndex = parseInt(toNode) + 1;
+
+
+                if (fromLayerIndex === layerDims.length - 1 && toLayerIndex === layerDims.length) {
+                    content = `Compare $$\\hat{y}$$ and $$y$$ at feature index ${fromNodeIndex}`;
+                } else {
+                    const strength = parseFloat(target.dataset.strength);
+                    const gradient = parseFloat(target.dataset.gradient);
+                    const absGradient = Math.abs(gradient);
+                    const gradEpsilon = 0.0001;
+
+                    let color;
+                    if (gradient >= 0) {
+                        color = `rgba(0, 0, 255, ${absGradient / (maxGradient + gradEpsilon)})`;
+                    } else {
+                        color = `rgba(255, 0, 0, ${absGradient / (maxGradient + gradEpsilon)})`;
+                    }
+
+                    target.style.filter = `drop-shadow(0 0 3px ${color})`;
+                    if (strength >= 0) {
+                        target.classList.add('positive');
+                        target.classList.remove('negative');
+                    } else {
+                        target.classList.add('negative');
+                        target.classList.remove('positive');
+                    }
+                    if (fromNodeIndex === layerDims[fromLayerIndex] + 1) {
+                        content = `Bias term for node $$${toNodeIndex}$$ in layer $$${toLayerIndex}$$.\n\nStrength: $$${strength.toFixed(4)}$$`;
+                    } else {
+                        content = `Connection from node $$${fromNodeIndex}$$ in layer $$${fromLayerIndex}$$ to node $$${toNodeIndex}$$ in layer $$${toLayerIndex}$$.\n\nStrength: $$${strength.toFixed(4)}$$`;
+                    }
+                    content += `\nGradient: $$${gradient.toFixed(4)}$$`;
+
                 }
             } else if (target.classList.contains('layer') || target.parentElement.classList.contains('layer')) {
                 const layer = target.classList.contains('layer') ? target : target.parentElement;
@@ -858,10 +994,10 @@
                     default:
                         if (latexLabel.dataset.info.startsWith('W')) {
                             const layerNum = latexLabel.dataset.info.slice(1);
-                            explanation = `This represents the weight matrix for layer $$ ${layerNum}$$. Each element $$W_{ij}$$ is the weight connecting the $$i$$-th neuron in the previous layer to the $$j$$-th neuron in this layer.`;
+                            explanation = `This represents the weight matrix for layer $$ ${layerNum}$$.`; // TODO
                         } else if (latexLabel.dataset.info.startsWith('fc')) {
                             const layerNum = latexLabel.dataset.info.slice(2);
-                            explanation = `This represents the operation in fully connected layer $$ ${layerNum}$$. It applies the weight matrix $$W$$ to the input $$x$$ and then applies a nonlinear activation function $$\\phi$$ (in this case, $$tanh$$).`;
+                            explanation = `This represents the operation in fully connected layer $$ ${layerNum}$$.\n\n ... $$\\phi$$ (in this case, $$tanh$$).`;
                         }
                 }
 
@@ -1060,7 +1196,6 @@
                     const strength = parseFloat(conn.dataset.strength);
                     const gradient = parseFloat(conn.dataset.gradient);
                     const absGradient = Math.abs(gradient);
-                    const maxGradient = 1; // Adjust this value based on your gradient range
 
                     let color;
                     if (gradient >= 0) {
@@ -1080,16 +1215,12 @@
                 }
 
                 // Highlight incoming connections
-                if (layerIndex > 0) {
-                    const incomingConnections = document.querySelectorAll(`.connection[data-to="${layerIndex},${nodeIndex}"]`);
-                    incomingConnections.forEach(highlightConnection);
-                }
+                const incomingConnections = document.querySelectorAll(`.connection[data-to="${layerIndex - 1},${nodeIndex}"]`);
+                incomingConnections.forEach(highlightConnection);
 
                 // Highlight outgoing connections
-                if (layerIndex < layers.length - 1) {
-                    const outgoingConnections = document.querySelectorAll(`.connection[data-from="${layerIndex},${nodeIndex}"]`);
-                    outgoingConnections.forEach(highlightConnection);
-                }
+                const outgoingConnections = document.querySelectorAll(`.connection[data-from="${layerIndex - 1},${nodeIndex}"]`);
+                outgoingConnections.forEach(highlightConnection);
             }
         }
 
@@ -1118,14 +1249,10 @@
         function updateConnectionOpacity() {
             const connections = document.querySelectorAll('.connection');
             connections.forEach(connection => {
-                if (showConnectionStrengthOpacity) {
-                    const strength = parseFloat(connection.dataset.strength);
-                    const maxStrength = parseFloat(connection.dataset.maxStrength);
-                    const opacity = strength / maxStrength;
-                    connection.setAttribute('stroke-opacity', opacity);
-                } else {
-                    connection.setAttribute('stroke-opacity', 1);
-                }
+                const strength = Math.abs(parseFloat(connection.dataset.strength));
+                // const maxStrength = parseFloat(connection.dataset.maxStrength);
+                const opacity = strength / maxStrength;
+                connection.setAttribute('stroke-opacity', opacity);
             });
         }
 
@@ -1135,13 +1262,127 @@
 
         // after micrograd implemented: nodes act as accumulators and change color and intensity based
         // on weighted input and activation function
-        function animateForwardPass() { }
+        function animateForwardPass() {
+            const stepDurationMs = 300;
 
-        function animateBackwardPass() { }
+            const animationLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            svg.appendChild(animationLayer);
+
+            function isYNode(layerIndex) {
+                return layerIndex === layerDims.length ; // TODO fix
+                // return layerIndex === layerDims.length; // TODO fix
+            }
+
+            function animateLayer(layerIndex) {
+                if (layerIndex > layerDims.length) {
+                    svg.removeChild(animationLayer);
+                    return;
+                }
+
+                const nodes = document.querySelectorAll(`.node[data-layer="${layerIndex}"]`); // TODO fix
+                // const nodes = document.querySelectorAll(`.node[data-layer="${layerIndex+1}"]`); // TODO fix
+                nodes.forEach(node => {
+                    const animatedNode = node.cloneNode(true);
+                    if (isYNode(layerIndex)) {
+                        animatedNode.setAttribute('r', '7');  // Smaller radius
+                        animatedNode.setAttribute('fill', '#666');  // dark navy blue color
+                    } else {
+                        animatedNode.setAttribute('r', '10');
+                        animatedNode.setAttribute('fill', '#ffb650');
+                    }
+                    animatedNode.setAttribute('fill-opacity', '0');
+                    animationLayer.appendChild(animatedNode);
+
+                    anime({
+                        targets: animatedNode,
+                        fillOpacity: 0.7,
+                        duration: stepDurationMs,
+                        easing: 'easeInOutQuad'
+                    });
+                });
+
+                if (layerIndex < layerDims.length) {
+                    const connections = document.querySelectorAll(`.connection[data-from^="${layerIndex},"]`);
+                    connections.forEach(conn => {
+                        const strength = parseFloat(conn.dataset.strength);
+                        const absStrength = Math.abs(strength);
+                        const opacity = absStrength / maxStrength;
+                        const color = strength >= 0 ? 'rgb(100, 100, 255)' : 'rgb(255, 100, 100)';
+
+                        const animatedConn = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                        animatedConn.setAttribute('x1', conn.getAttribute('x1'));
+                        animatedConn.setAttribute('y1', conn.getAttribute('y1'));
+                        animatedConn.setAttribute('x2', conn.getAttribute('x1'));
+                        animatedConn.setAttribute('y2', conn.getAttribute('y1'));
+                        animatedConn.setAttribute('stroke', color);
+                        animatedConn.setAttribute('stroke-opacity', opacity);
+                        animatedConn.setAttribute('stroke-width', '3');
+
+                        // Add dashed line for connection between y_hat and y
+                        if (layerIndex === layerDims.length - 2) { // TODO fix
+                            // if (layerIndex === layerDims.length - 1) { // TODO fix
+                            animatedConn.setAttribute('stroke-dasharray', '5,5');
+                        }
+
+                        animationLayer.appendChild(animatedConn);
+
+                        anime({
+                            targets: animatedConn,
+                            x2: conn.getAttribute('x2'),
+                            y2: conn.getAttribute('y2'),
+                            duration: stepDurationMs,
+                            easing: 'easeInOutQuad'
+                        });
+                    });
+                }
+
+                setTimeout(() => animateLayer(layerIndex + 1), stepDurationMs);
+            }
+
+            animateLayer(-1); // TODO fix
+            // animateLayer(0); // TODO fix
+        }
+
+        function animateBackwardPass() {
+        }
+        
 
         function animateUpdateWeights() { }
 
-        function animateShockWeights() { }
+        function animateShockWeights() {
+            setMaxes();
+            const connections = document.querySelectorAll('.connection:not([data-to^="' + layerDims.length + ',"])');
+
+            connections.forEach(connection => {
+                if (connection.dataset.strength) {
+                    const newStrength = parseFloat(connection.dataset.strength);
+    
+                    // Calculate new opacity
+                    const opacity = Math.abs(newStrength) / maxStrength;
+    
+                    // Animate jitter effect and opacity change
+                    connection.animate([
+                        { transform: 'translateY(0px)' },
+                        { transform: 'translateY(-5px)' },
+                        { transform: 'translateY(5px)' },
+                        { transform: 'translateY(0px)' }
+                    ], {
+                        duration: 200,
+                        iterations: 1,
+                        fill: 'forwards'
+                    });
+    
+                    // Update the stroke-opacity attribute after animation
+                    setTimeout(() => {
+                        connection.setAttribute('stroke-opacity', opacity);
+                    }, 200);
+                }
+
+            });
+
+            // setMaxes();
+            updateConnectionOpacity();
+         }
 
 
         function resetTrainingDisplay() {
@@ -1216,6 +1457,66 @@
             return [tr, val, te];
         }
 
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        // Micrograd MLP (visual update)
+        //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+        function zeroGradViz() {
+            const connections = document.querySelectorAll('.connection');
+            connections.forEach(connection => {
+                connection.dataset.gradient = '0';
+                connection.style.filter = ''; // Reset any gradient-based styling
+            });
+        }
+
+
+        function updatedGradViz() {
+            setMaxes(); // need updated maxGradient
+            const connections = document.querySelectorAll('.connection');
+            let layerParams = [];
+            let layerSizes = [];
+            mlp.layers.forEach(layer => {
+                layerParams.push(layer.parameters());
+                layerSizes.push(layer.neurons[0].parameters().length)
+            });
+            // logMessage(`${layerParams.length}, ${layerSizes}`);
+            connections.forEach(connection => {
+                // fromLayer determines the first index into layerParams. 
+                // toNode and fromNode acts as a pointer. `n_elements_previous_layer * toNode + fromNode` gives the index
+                const [fromLayer, fromNode] = connection.dataset.from.split(',').map(val => parseInt(val, 10)); // TODO fix fromLayer starts from -1 instead of 0
+                const [toLayer, toNode] = connection.dataset.to.split(',').map(val => parseInt(val, 10));
+
+                // logMessage(`${fromLayer},    ${toNode}, ${fromNode}, ${layerSizes[fromLayer+1] * toNode + fromNode}`);
+                // logMessage(`${fromLayer+1},    ${toNode}, ${fromNode}`);
+                if (fromLayer + 1 < layerParams.length) {
+                    const gradient = layerParams[fromLayer + 1][layerSizes[fromLayer + 1] * toNode + fromNode].grad;
+                    connection.dataset.gradient = gradient.toFixed(4);
+                }
+            });
+        }
+
+        // TODO set opacity
+        function updatedStrengthViz() {
+            setMaxes(); // need updated maxStrength
+            const connections = document.querySelectorAll('.connection');
+            let layerParams = [];
+            let layerSizes = [];
+            mlp.layers.forEach(layer => {
+                layerParams.push(layer.parameters());
+                layerSizes.push(layer.neurons[0].parameters().length)
+            });
+            connections.forEach(connection => {
+                // fromLayer determines the first index into layerParams. 
+                // toNode and fromNode acts as a pointer. `n_elements_previous_layer * toNode + fromNode` gives the index
+                const [fromLayer, fromNode] = connection.dataset.from.split(',').map(val => parseInt(val, 10)); // TODO fix fromLayer starts from -1 instead of 0
+                const [toLayer, toNode] = connection.dataset.to.split(',').map(val => parseInt(val, 10));
+
+                if (fromLayer + 1 < layerParams.length) {
+                    const weight = layerParams[fromLayer + 1][layerSizes[fromLayer + 1] * toNode + fromNode].data;
+                    connection.dataset.strength = weight.toFixed(4);
+                }
+            });
+            updateConnectionOpacity();
+        }
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Micrograd MLP
@@ -1338,6 +1639,7 @@
                 for (const p of this.parameters()) {
                     p.grad = 0;
                 }
+                zeroGradViz(); // update connection gradients on SVG
             }
 
             parameters() {
@@ -1350,6 +1652,7 @@
                 super();
                 this.w = Array(nin).fill().map(() => new Value(random.uniform(-1, 1) * Math.pow(nin, -0.5)));
                 this.b = new Value(0);
+
                 this.nonlin = kwargs.nonlin !== undefined ? kwargs.nonlin : true;
             }
 
@@ -1375,7 +1678,7 @@
 
             call(x) {
                 const out = this.neurons.map(n => n.call(x));
-                return out.length === 1 ? out[0] : out;
+                return out;
             }
 
             parameters() {
@@ -1398,7 +1701,6 @@
             call(x) {
                 for (const layer of this.layers) {
                     x = layer.call(x);
-                    x = Array.isArray(x) ? x : [x]
                 }
                 return x
             }
@@ -1422,6 +1724,7 @@
                         neuron.b.data += bias_noise;
                     }
                 }
+                
             }
         }
 
@@ -1485,6 +1788,7 @@
         function trainBackward() {
             // backward pass (deposit the gradients)
             loss.backward();
+            updatedGradViz();
         }
 
         function trainUpdate() {
@@ -1496,6 +1800,7 @@
                 const v_hat = p.v / (1 - Math.pow(beta2, epoch + 1));
                 p.data -= learning_rate * (m_hat / (Math.sqrt(v_hat) + eps) + weight_decay * p.data);
             }
+            updatedStrengthViz();
             mlp.zeroGrad();
             updateTrainingDisplay(epoch, loss.data, null);
 
@@ -1517,10 +1822,12 @@
                 switch (stage) {
                     case 0: // Forward pass
                         trainForward();
+                        animateForwardPass();
                         break;
 
                     case 1: // Backward pass
                         trainBackward();
+                        animateBackwardPass();
                         break;
                     case 2: // Update
                         trainUpdate();
@@ -1617,7 +1924,8 @@
                 trainModel(currentTrainingStage);
             }
 
-            const buttonsDisableRunning = ['btn-reset-mlp', 'btn-shock-weights', 'btn-step', 'btn-fwd-backprop-update'];
+            // const buttonsDisableRunning = ['btn-reset-mlp', 'btn-shock-weights', 'btn-step', 'btn-fwd-backprop-update'];
+            const buttonsDisableRunning = ['btn-reset-mlp', 'btn-step', 'btn-fwd-backprop-update'];
             buttonsDisableRunning.forEach(id => {
                 const button = document.getElementById(id);
                 button.disabled = isRunningOptimization;
@@ -1643,6 +1951,7 @@
 
         document.getElementById('btn-shock-weights').addEventListener('click', function () {
             mlp.shockWeights();
+            animateShockWeights();
         });
 
         // Add mouseover and mouseout event listeners for the new buttons
