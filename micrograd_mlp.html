@@ -615,6 +615,7 @@
             circle.classList.add('node');
             circle.dataset.layer = layerIndex;
             circle.dataset.node = nodeIndex;
+            circle.dataset.isBias = isBiasNode;
             parent.appendChild(circle);
 
             circle.addEventListener('mouseover', showInfo);
@@ -877,16 +878,25 @@
             } else if (target.classList.contains('node')) {
                 const layerIndex = parseInt(target.dataset.layer);
                 const nodeIndex = parseInt(target.dataset.node) ;
+                const isBias = target.dataset.isBias === 'true';
                 if (nodeIndex === layerDims[layerIndex] + 1) {
                     content = `Indentity node (the vector $$\\mathbf{1}$$).\n\nIt provides a way to add the bias term as part of the matrix multiplication, instead of seperately.`;
                 } else if (layerIndex === 0) {
-                    content = `Input feature $$${nodeIndex}$$`;
+                    if (isBias) {
+                        content = `Bias term for layer $$${layerIndex}$$`;
+                    } else {
+                        content = `Input feature $$${nodeIndex}$$`;
+                    }
                 } else if (layerIndex === layerDims.length - 1) {
                     content = `Output feature $$${nodeIndex}$$ for $$\\hat{y}$$`;
                 } else if (layerIndex === layerDims.length) {
                     content = `Output feature $$${nodeIndex}$$ for $$y$$`;
                 } else {
+                    if (isBias) {
+                        content = `Bias term for layer $$${layerIndex}$$`;
+                    } else {
                     content = `Node in fully connected layer ${layerIndex}, index ${nodeIndex}`;
+                    }
                 }
             } else if (target.classList.contains('connection')) {
                 const [fromLayer, fromNode] = target.dataset.from.split(',');
