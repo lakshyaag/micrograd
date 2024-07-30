@@ -342,12 +342,11 @@
         let predsTrain, predsVal;
 
         let isRunningOptimization = false;
-        // let isReadyBackprop = false;
-        let optimizationStateName = 'forward';
         let epoch = 0;
 
         let currentTrainingStage = 0; // 0: forward, 1: backward, 2: update
         let maxStrength = 0.001;
+        let maxGradient = 0.001;
 
         // AdamW
         let learning_rate = 1e-1;
@@ -360,7 +359,6 @@
 
         const btnPlayPause = document.getElementById('btn-play-pause');
         const btnStep = document.getElementById('btn-step');
-        // const btnPlayPauseContent = document.getElementById('btn-play-pause-content');
         const btnResetMLP = document.getElementById('btn-reset-mlp');
         const btnFwdBackUp = document.getElementById('btn-fwd-backprop-update');
 
@@ -438,7 +436,7 @@
             currentTrainingStage = 0;
             epoch = 0;
             resetTrainingDisplay();
-            updateButtonState(btnFwdBackUp, currentTrainingStage);
+            updateFwdBackUpButton(btnFwdBackUp, currentTrainingStage);
             predsTrain = [];
             predsVal = [];
             updateDataPlot();
@@ -478,13 +476,6 @@
             }
         }
 
-        // function updateSvgDimensions() {
-        //     const dimensions = getSvgDimensions();
-        //     svgWidth = dimensions.width;
-        //     svgHeight = dimensions.height;
-        // }
-
-
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw the MLP
@@ -504,11 +495,7 @@
             svg.innerHTML = '';
 
             const layerGap = svgWidth / (layerDims.length + 2);
-            // get max strength and gradient of network for drawing
-            setMaxes();
-            // logMessage(maxStrength)
-            // logMessage(maxGradient)
-
+            setMaxes(); // get max strength and gradient of network for drawing
 
             // draw layer rectangles, nodes, and connections for each layer
             const layerGroupWidth = 30;
@@ -612,8 +599,6 @@
         }
 
 
-
-
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw nodes
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -662,13 +647,10 @@
                 // connect to the previous layers nodes
                 const neuronWeights = neuron.parameters()
                 const prevLayerSize = neuronWeights.length
-                // logMessage(prevLayerSize);
 
                 for (let j = 0; j < prevLayerSize; j++) {
                     const fromY = (j + 1) * (svgHeight / (prevLayerSize + 1));
                     const weight = neuronWeights[j];
-                    // logMessage(`(${layerXCoord}, ${fromY}) to  (${layerXCoord + layerGap}, ${toY})`)
-                    // logMessage(weight);
 
                     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                     line.setAttribute('x1', layerXCoord);
@@ -680,7 +662,6 @@
 
                     const strength = weight.data;
                     const opacity = Math.min(Math.abs(strength) / maxStrength, maxOpacity);
-                    // logMessage(`${strength}, ${opacity}, ${maxStrength}`)
                     line.setAttribute('stroke-opacity', opacity);
 
                     line.classList.add('connection');
@@ -699,14 +680,6 @@
                 }
             }
         }
-
-
-        // function initializeGradients() {
-        //     const connections = document.querySelectorAll('.connection:not([data-to^="' + layers.length + ',"])');
-        //     connections.forEach(connection => {
-        //         connection.dataset.gradient = randomNormal().toFixed(4);
-        //     });
-        // }
 
 
         function drawYConnections(layerIndex, x, layerGap) {
@@ -766,6 +739,7 @@
                 svg.appendChild(createLine(width / 2 - 5, y, width / 2 + 5, y));
             }
         }
+
 
         function plotDataPoints(svg, dataPoints, predictions, isTrainingSet, dataPointSize = 5) {
             const width = parseInt(svg.getAttribute('width'));
@@ -835,8 +809,6 @@
         }
 
 
-
-
         function updateDataPlot() {
             const svg = document.getElementById('data-plot');
             const width = parseInt(svg.getAttribute('width'));
@@ -866,9 +838,9 @@
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Display detailed info top-right
-        // TODO later - selectedElement logic
+        // 
+        // TODO later - selectedElement logic so that a click on an el keeps it in display until next click
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
         function showInfo(event) {
             const target = event.target;
             let content = '';
@@ -880,15 +852,15 @@
                     content = "Run optimization";
                 }
             } else if (target.id === 'btn-fwd-backprop-update') {
-                switch (optimizationStateName) {
-                    case 'forward':
+                switch (currentTrainingStage) {
+                    case 0:
                         content = "**Forward pass**: run inference/prediction on the input data to produce predictions $$\\hat{y}$$ and calculate loss with respect to the true output values $$y$$.";
                         break;
-                    case 'backprop':
+                    case 1:
                         // content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers. We are able to accomplish this using the chain rule from calculus ($$\\dfrac{dL}{dW_{l}} → \\dfrac{dL}{dW_{l-1}} → ... → \\dfrac{dL}{dW_{1}}$$, where $$l$$ is the number of layers in our MLP)";
                         content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers.\n\nWe are able to accomplish this using the chain rule from calculus.";
                         break;
-                    case 'update':
+                    case 2:
                         content = "**Update weights**: Use the gradient information to update the weights $$ W $$ of the network based on our optimization algorithm (AdamW in this case) and hyperparameters (e.g. learning rate, weight decay), with the goal of nudging this network towards better predictions of the output given the input.\n\nWe also zeros out the gradients to prepare for the next step.";
                         break;
                 }
@@ -991,7 +963,7 @@
                     default:
                         if (latexLabel.dataset.info.startsWith('W')) {
                             const layerNum = latexLabel.dataset.info.slice(1);
-                            explanation = `This represents the weight matrix for layer $$ ${layerNum}$$.`; // TODO
+                            explanation = `This represents the weight matrix for layer $$ ${layerNum}$$.`; // TODO more info
                         } else if (latexLabel.dataset.info.startsWith('fc')) {
                             const layerNum = latexLabel.dataset.info.slice(2);
                             explanation = `This represents the operation in fully connected layer $$ ${layerNum}$$.\n\n ... $$\\phi$$ (in this case, $$tanh$$).`;
@@ -1060,7 +1032,6 @@
                 document.getElementById('info').textContent = '';
             }
         }
-
 
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -1179,7 +1150,6 @@
         }
 
 
-
         function handleNodeHover(event) {
             const target = event.target;
             if (target.classList.contains('node')) {
@@ -1256,9 +1226,6 @@
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Animations
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-
-        // after micrograd implemented: nodes act as accumulators and change color and intensity based
-        // on weighted input and activation function
         function animateForwardPass() {
             const stepDurationMs = 250;
 
@@ -1342,11 +1309,6 @@
             const animationLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             svg.appendChild(animationLayer);
 
-            let maxGradient = 0;
-            document.querySelectorAll('.connection').forEach(conn => {
-                const gradient = Math.abs(parseFloat(conn.dataset.gradient));
-                if (gradient > maxGradient) maxGradient = gradient;
-            });
 
             function isTerminalNode(layerIndex, nodeIndex) {
                 // X nodes (input layer)
@@ -1371,7 +1333,7 @@
                         animatedNode.setAttribute('r', '7');  // Smaller radius
                         animatedNode.setAttribute('fill', '#666');  // dark navy blue color
                     } else {
-                        animatedNode.setAttribute('r', '15');
+                        animatedNode.setAttribute('r', '10');
                         animatedNode.setAttribute('fill', '#ffb650');
                     }
                     animatedNode.setAttribute('fill-opacity', '0');
@@ -1426,8 +1388,6 @@
         }
         
 
-        function animateUpdateWeights() { }
-
         function animateShockWeights() {
             setMaxes();
             const connections = document.querySelectorAll('.connection:not([data-to^="' + layerDims.length + ',"])');
@@ -1459,7 +1419,6 @@
 
             });
 
-            // setMaxes();
             updateConnectionOpacity();
          }
 
@@ -1480,7 +1439,6 @@
                 document.getElementById('val-loss-value').textContent = valLoss.toFixed(20);
             }
         }
-
 
 
         function logMessage(message) {
@@ -1559,15 +1517,12 @@
                 layerParams.push(layer.parameters());
                 layerSizes.push(layer.neurons[0].parameters().length)
             });
-            // logMessage(`${layerParams.length}, ${layerSizes}`);
             connections.forEach(connection => {
                 // fromLayer determines the first index into layerParams. 
                 // toNode and fromNode acts as a pointer. `n_elements_previous_layer * toNode + fromNode` gives the index
                 const [fromLayer, fromNode] = connection.dataset.from.split(',').map(val => parseInt(val, 10));
                 const [toLayer, toNode] = connection.dataset.to.split(',').map(val => parseInt(val, 10));
 
-                // logMessage(`${fromLayer},    ${toNode}, ${fromNode}, ${layerSizes[fromLayer] * toNode + fromNode}`);
-                // logMessage(`${fromLayer+1},    ${toNode}, ${fromNode}`);
                 if (fromLayer < layerParams.length) {
                     const gradient = layerParams[fromLayer][layerSizes[fromLayer] * toNode + fromNode].grad;
                     connection.dataset.gradient = gradient.toFixed(4);
@@ -1596,6 +1551,20 @@
                 }
             });
             updateConnectionOpacity();
+        }
+
+        function updateFwdBackUpButton(button, stage) {
+            switch (stage) {
+                case 0:
+                    button.textContent = '→';
+                    break;
+                case 1:
+                    button.textContent = '←';
+                    break;
+                case 2:
+                    button.textContent = '↑';
+                    break;
+            }
         }
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -1804,7 +1773,6 @@
                         neuron.b.data += bias_noise;
                     }
                 }
-                
             }
         }
 
@@ -1899,6 +1867,7 @@
                 trainBackward();
                 trainUpdate();
             } else {
+                // only animimate forward and backward passes on partial steps
                 switch (stage) {
                     case 0: // Forward pass
                         trainForward();
@@ -1914,7 +1883,7 @@
                         break;
                 }
                 currentTrainingStage = (stage + 1) % 3;
-                updateButtonState(btnFwdBackUp, currentTrainingStage);
+                updateFwdBackUpButton(btnFwdBackUp, currentTrainingStage);
             }
         }
 
@@ -1935,35 +1904,17 @@
             trainingLoop();
         }
 
-        function updateButtonState(button, stage) {
-            switch (stage) {
-                case 0:
-                    button.textContent = '→';
-                    optimizationStateName = 'forward';
-                    break;
-                case 1:
-                    button.textContent = '←';
-                    optimizationStateName = 'backprop';
-                    break;
-                case 2:
-                    button.textContent = '↑';
-                    optimizationStateName = 'update';
-                    break;
-            }
-        }
-
         function resetCurrentTrainingStage() {
             // in case we are partway through a cycle, reset stage and grad
             currentTrainingStage = 0;
             mlp.zeroGrad();
-            updateButtonState(btnFwdBackUp, currentTrainingStage);
+            updateFwdBackUpButton(btnFwdBackUp, currentTrainingStage);
         }
 
         function argmax(array) {
             if (array.length === 0) {
                 return -1; // Return -1 for empty array
             }
-
             const max = Math.max(...array);
             return array.indexOf(max);
         }
@@ -2015,13 +1966,13 @@
 
         btnStep.addEventListener('click', function () {
             trainModelStep(currentTrainingStage, true);
-            updateButtonState(btnFwdBackUp, currentTrainingStage);
+            updateFwdBackUpButton(btnFwdBackUp, currentTrainingStage);
             showInfo({ target: this });
         });
 
         btnFwdBackUp.addEventListener('click', function () {
             trainModelStep(currentTrainingStage, false);
-            updateButtonState(this, currentTrainingStage);
+            updateFwdBackUpButton(this, currentTrainingStage);
             showInfo({ target: this });
         });
 
