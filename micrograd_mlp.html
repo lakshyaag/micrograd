@@ -322,7 +322,7 @@
     <div id="reporting-container">
         <div id="epoch-display">Epoch: 0</div>
         <div id="train-loss-display" class="loss-display">
-            <span class="loss-label">Train Loss:</span>
+            <span class="loss-label">Training Loss:</span>
             <span id="train-loss-value">N/A</span>
         </div>
         <div id="val-loss-display" class="loss-display">
@@ -374,12 +374,13 @@
         const svg = document.getElementById('network');
         // const info = document.getElementById('info');
         const MAX_LAYER_SIZE = 16;
-        const MAX_N_LAYERS_HIDDEN = 5;
+        const MAX_N_LAYERS_HIDDEN = 3;
         const initialHidden = "16,"
         const initialLayers = `[2, ${initialHidden} 3]`
         // const initialLayers = "[2, 10, 10, 3]"
         layerDims = JSON.parse(initialLayers)
-        let svgWidth, svgHeight;
+        let svgWidth = 1200;
+        let svgHeight = 700;
 
         const valInterval = 10; // interval for calculating validation loss
 
@@ -406,12 +407,12 @@
         };
 
 
-
         function getLayerColor(layerIndex) {
             if (layerIndex === 0) return layerColors.x;
             if (layerIndex === layerDims.length) return layerColors.y;
             return layerColors.fc;
         }
+
 
         function resetAdamMLP() {
             for (const p of mlp.parameters()) {
@@ -444,6 +445,9 @@
             predsTrain = [];
             predsVal = [];
             updateDataPlot();
+
+            // Clear the existing SVG and draw the new network
+            drawNetwork();
         }
 
 
@@ -464,7 +468,7 @@
                     newLayers = JSON.parse(`[2, ${cleanedInput} 3]`);
                 }
                 console.log("h3")
-                if (Array.isArray(newLayers) && newLayers.length >= 2 && newLayers.length <= MAX_N_LAYERS_HIDDEN+2 && newLayers.every(n => n <= MAX_LAYER_SIZE)) {
+                if (Array.isArray(newLayers) && newLayers.length >= 2 && newLayers.length <= MAX_N_LAYERS_HIDDEN + 2 && newLayers.every(n => n <= MAX_LAYER_SIZE)) {
                     layerDims = newLayers;
                     resetMLP();
                     // Update the input field to reflect the correct interpretation
@@ -477,11 +481,11 @@
             }
         }
 
-        function updateSvgDimensions() {
-            const dimensions = getSvgDimensions();
-            svgWidth = dimensions.width;
-            svgHeight = dimensions.height;
-        }
+        // function updateSvgDimensions() {
+        //     const dimensions = getSvgDimensions();
+        //     svgWidth = dimensions.width;
+        //     svgHeight = dimensions.height;
+        // }
 
 
 
@@ -491,21 +495,140 @@
         function drawNetwork() {
             svg.innerHTML = '';
 
-            if (!mlp) {
-                resetMLP();
+            const layerGap = svgWidth / (layerDims.length + 2);
+
+            // draw layer rectangles, nodes, and connections for each layer
+            const layerGroupWidth = 30;
+            for (let layerIndex = 0; layerIndex < layerDims.length; layerIndex++) {
+                const nodeCountNoBias = layerDims[layerIndex]
+
+                const svgX = (layerIndex + 1) * layerGap;
+                const layerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                layerGroup.classList.add('layer');
+                layerGroup.dataset.layer = layerIndex;
+
+                const layerRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                layerRect.setAttribute('x', svgX - layerGroupWidth / 2);
+                layerRect.setAttribute('y', 0);
+                layerRect.setAttribute('width', layerGroupWidth);
+                layerRect.setAttribute('height', svgHeight);
+                const layerColor = getLayerColor(layerIndex);
+                layerRect.setAttribute('fill', layerColor.overlay);
+
+                layerGroup.appendChild(layerRect);
+
+                layerGroup.addEventListener('mouseover', showInfo);
+                layerGroup.addEventListener('mouseout', clearInfo);
+                // layerGroup.addEventListener('click', showInfo);
+
+                const totalNodes = layerIndex < layerDims.length - 1 ? nodeCountNoBias + 1 : nodeCountNoBias;
+
+                for (let i = 0; i < nodeCountNoBias; i++) {
+                    const svgY = (i + 1) * (svgHeight / (totalNodes + 1));
+                    drawNode(svgX, svgY, layerIndex, i, layerGroup);
+                }
+
+                // Add bias node for all layers except the last one
+                if (layerIndex < layerDims.length - 1) {
+                    const biasY = (nodeCountNoBias + 1) * (svgHeight / (totalNodes + 1));
+                    drawBiasNode(svgX, biasY, layerIndex, layerGroup);
+                }
+
+                //
+                // TODO draw connections
+                //
+
+                svg.appendChild(layerGroup);
             }
 
-            const layerGap = svgWidth / (layers.length + 2);
+            // Draw the additional "y" layer
+            const yLayerX = (layerDims.length + 1) * layerGap;
+            const yLayerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            yLayerGroup.classList.add('layer');
+            yLayerGroup.dataset.layer = layerDims.length;
+
+            const yLayerRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            yLayerRect.setAttribute('x', yLayerX - layerGroupWidth / 2);
+            yLayerRect.setAttribute('y', 0);
+            yLayerRect.setAttribute('width', layerGroupWidth);
+            yLayerRect.setAttribute('height', svgHeight);
+            yLayerRect.setAttribute('fill', layerColors.y.overlay);
+
+            yLayerGroup.appendChild(yLayerRect);
+
+            yLayerGroup.addEventListener('mouseover', showInfo);
+            yLayerGroup.addEventListener('mouseout', clearInfo);
+            // yLayerGroup.addEventListener('click', showInfo);
+
+            const lastLayerNodeCount = layerDims[layerDims.length - 1];
+            for (let i = 0; i < lastLayerNodeCount; i++) {
+                const svgY = (i + 1) * (svgHeight / (lastLayerNodeCount + 1));
+                drawNode(yLayerX, svgY, layerDims.length, i, yLayerGroup);
+            }
+
+            svg.appendChild(yLayerGroup);
+
+            // TODO
+            // Draw connections between y_hat and y
+            // TODO
+
+            // Draw the curly brace and "loss" text
+            const lastLayerX = (layerDims.length + 1) * layerGap;
+            const braceWidth = layerGroupWidth / 2;
+            const topNodeY = (1) * (svgHeight / (lastLayerNodeCount + 1));
+            const bottomNodeY = (lastLayerNodeCount) * (svgHeight / (lastLayerNodeCount + 1));
+            const braceHeight = bottomNodeY - topNodeY;
+            const braceX = lastLayerX + layerGroupWidth;
+            const braceY = topNodeY;
+
+            const brace = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            brace.setAttribute('d', `M ${braceX} ${braceY}
+                         C ${braceX} ${braceY + braceHeight * 0.05}, ${braceX + braceWidth * 0.6} ${braceY + braceHeight * 0.1}, ${braceX + braceWidth * 0.8} ${braceY + braceHeight * 0.2}
+                         C ${braceX + braceWidth} ${braceY + braceHeight * 0.3}, ${braceX + braceWidth} ${braceY + braceHeight * 0.4}, ${braceX + braceWidth} ${braceY + braceHeight * 0.45}
+                         L ${braceX + braceWidth * 1.5} ${braceY + braceHeight * 0.5}
+                         L ${braceX + braceWidth} ${braceY + braceHeight * 0.55}
+                         C ${braceX + braceWidth} ${braceY + braceHeight * 0.6}, ${braceX + braceWidth} ${braceY + braceHeight * 0.7}, ${braceX + braceWidth * 0.8} ${braceY + braceHeight * 0.8}
+                         C ${braceX + braceWidth * 0.6} ${braceY + braceHeight * 0.9}, ${braceX} ${braceY + braceHeight * 0.95}, ${braceX} ${braceY + braceHeight}`);
+            brace.setAttribute('fill', 'none');
+            brace.setAttribute('stroke', '#ccc');
+            brace.setAttribute('stroke-width', '2');
+            svg.appendChild(brace);
+
+            addLayerLabels();
+            addLossLabel();
         }
+
+
 
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw nodes
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        // function drawNode(x, y, layerIndex, nodeIndex, parent, isBiasNode = false) {
+        function drawNode(x, y, layerIndex, nodeIndex, parent, isBiasNode = false) {
+            const r = 10;
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            const shapeColor = isBiasNode ? layerColors.bias.shape : getLayerColor(layerIndex).shape
+            circle.setAttribute('cx', x);
+            circle.setAttribute('cy', y);
+            circle.setAttribute('r', isBiasNode ? r / 2 : r);
+            circle.setAttribute('fill', shapeColor);
+            circle.setAttribute('stroke', 'gray');
+            circle.setAttribute('stroke-width', '1');
+            circle.classList.add('node');
+            circle.dataset.layer = layerIndex;
+            circle.dataset.node = nodeIndex;
+            parent.appendChild(circle);
 
+            circle.addEventListener('mouseover', showInfo);
+            circle.addEventListener('mouseout', clearInfo);
+            // circle.addEventListener('click', showInfo);
+            // circle.addEventListener('mouseenter', handleNodeHover);
+            // circle.addEventListener('mouseleave', resetNodeHover);
+        }
 
-        // function drawBiasNode(x, y, layerIndex, parent) {
+        function drawBiasNode(x, y, layerIndex, parent) {
+            drawNode(x, y, layerIndex, layerDims[layerIndex], parent, true);
+        }
 
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Draw connections
@@ -668,10 +791,10 @@
                         break;
                     case 'backprop':
                         // content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers. We are able to accomplish this using the chain rule from calculus ($$\\dfrac{dL}{dW_{l}} → \\dfrac{dL}{dW_{l-1}} → ... → \\dfrac{dL}{dW_{1}}$$, where $$l$$ is the number of layers in our MLP)";
-                        content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers. We are able to accomplish this using the chain rule from calculus.";
+                        content = "**Backpropagate gradients**: Use the loss information to calculate gradients for each of the tunable weight parameters $$ W $$, starting at the end of the MLP and using the gradient information from later layers to calculate how much we should change the weights in the earlier layers.\n\nWe are able to accomplish this using the chain rule from calculus.";
                         break;
                     case 'update':
-                        content = "**Update weights**: Use the gradient information to update the weights $$ W $$ of the network based on our optimization algorithm (AdamW in this case) and hyperparameters (e.g. learning rate, weight decay), with the goal of nudging this network towards better predictions of the output given the input. We also zeros out the gradients to prepare for the next step.";
+                        content = "**Update weights**: Use the gradient information to update the weights $$ W $$ of the network based on our optimization algorithm (AdamW in this case) and hyperparameters (e.g. learning rate, weight decay), with the goal of nudging this network towards better predictions of the output given the input.\n\nWe also zeros out the gradients to prepare for the next step.";
                         break;
                 }
             } else if (target.id === 'btn-reset-mlp') {
@@ -684,7 +807,67 @@
                 content = "Enter the dimensions of hidden layers, separated by commas.\n\nInput must be comma-separated integers. Maximum " + MAX_N_LAYERS_HIDDEN + " hidden layers and " + MAX_LAYER_SIZE + " neurons per layer.\n\nFor example, $$16,8$$ creates two hidden layers with 16 and 8 neurons respectively.";
             } else if (target.id === 'btn-edit-dims') {
                 content = "Initialize a new network with the given dimensions.\n\nThis will reset all weights and biases to new random values based on the specified layer structure and the Uniform Xavier Initialization.";
+            } else if (target.classList.contains('node')) {
+                const layerIndex = parseInt(target.dataset.layer);
+                const nodeIndex = parseInt(target.dataset.node) + 1;
+                if (nodeIndex === layerDims[layerIndex] + 1) {
+                    if (layerIndex == 0) {
+                        content = `Bias node (the vector $$\\mathbf{1}$$) for the input layer`;
+                    } else {
+                        content = `Bias node (the vector $$\\mathbf{1}$$) for fully connected layer $$${layerIndex}$$`;
+                    }
+                } else if (layerIndex === 0) {
+                    content = `Input feature $$${nodeIndex}$$`;
+                } else if (layerIndex === layerDims.length - 1) {
+                    content = `Output feature $$${nodeIndex}$$ for $$\\hat{y}$$`;
+                } else if (layerIndex === layerDims.length) {
+                    content = `Output feature $$${nodeIndex}$$ for $$y$$`;
+                } else {
+                    content = `Node in fully connected layer ${layerIndex}, index ${nodeIndex}`;
+                }
+            } else if (target.classList.contains('layer') || target.parentElement.classList.contains('layer')) {
+                const layer = target.classList.contains('layer') ? target : target.parentElement;
+                const layerIndex = parseInt(layer.dataset.layer);
+                if (layerIndex === 0) {
+                    content = `Input layer, containing $$ ${layerDims[layerIndex]}$$ features`;
+                } else if (layerIndex === layerDims.length - 1) {
+                    content = `Output layer $$\\hat{y}$$, containing $$ ${layerDims[layerIndex]}$$ features`;
+                } else if (layerIndex === layerDims.length) {
+                    content = `True values $$y$$, containing $$${layerDims[layerDims.length - 1]}$$ features`;
+                } else {
+                    content = `Fully connected layer ${layerIndex}, containing $$${layerDims[layerIndex]}$$ nodes`;
+                }
+            } else if (target.closest('.latex-label')) {
+                const latexLabel = target.closest('.latex-label');
+                const formula = latexLabel.dataset.latex;
+                let explanation = '';
+
+                switch (latexLabel.dataset.info) {
+                    case 'x':
+                        explanation = "This represents the input to the neural network.\n\nIn this case, it's a 2D array containing the $$x1$$ and $$x2$$ coordinates of each data point.";
+                        break;
+                    case 'y':
+                        explanation = "This is the true label vector, representing the correct classification for the input.\n\nIt's a one-hot encoded with $$3$$s elements, corresponding to the three possible classes.";
+                        break;
+                    case 'y_hat':
+                        explanation = "This is the predicted output of the neural network. It has $$3$$ elements, each representing the network's confidence that the input belongs to one of the three classes.";
+                        break;
+                    case 'loss':
+                        explanation = `This is the loss function, which measures the difference between the predicted output $$\\hat{y}$$ and the true label $$y$$. We use cross-entropy loss for this classification task.\n\nThe goal of training is to minimize this loss, bringing $$\\hat{y}$$ and $$y$$ closer for every input.`;
+                        break;
+                    default:
+                        if (latexLabel.dataset.info.startsWith('W')) {
+                            const layerNum = latexLabel.dataset.info.slice(1);
+                            explanation = `This represents the weight matrix for layer $$ ${layerNum}$$. Each element $$W_{ij}$$ is the weight connecting the $$i$$-th neuron in the previous layer to the $$j$$-th neuron in this layer.`;
+                        } else if (latexLabel.dataset.info.startsWith('fc')) {
+                            const layerNum = latexLabel.dataset.info.slice(2);
+                            explanation = `This represents the operation in fully connected layer $$ ${layerNum}$$. It applies the weight matrix $$W$$ to the input $$x$$ and then applies a nonlinear activation function $$\\phi$$ (in this case, $$tanh$$).`;
+                        }
+                }
+
+                content = `$$${formula}$$\n\n${explanation}`;
             }
+
 
 
             renderInfoContent(infoElement, content);
@@ -695,7 +878,7 @@
             const isTraining = target.dataset.set === "Training";
             const calculationFrequency = isTraining
                 ? "Updated every epoch"
-                : `Updated every ${valInterval} epochs`;
+                : `Evaluated every ${valInterval} epochs`;
 
             const content = `**${target.dataset.set}** Data Point (${calculationFrequency})\n
         Coordinates: (${target.dataset.x0}, ${target.dataset.x1})
@@ -750,7 +933,7 @@
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=
         // Create figure labels
         //-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        function createLatexLabel(x, y, text, color) {
+        function createLatexLabel(x, y, text, color, labelInfo) {
             const foreignObject = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
             foreignObject.setAttribute('x', x - 75);
             foreignObject.setAttribute('y', y - 20);
@@ -758,6 +941,7 @@
             foreignObject.setAttribute('height', '40');
             foreignObject.classList.add('latex-label');
             foreignObject.dataset.latex = text;
+            foreignObject.dataset.info = labelInfo;
 
             const div = document.createElement('div');
             div.style.fontSize = LATEX_FONT_SIZE + 'px';
@@ -780,13 +964,30 @@
         }
 
 
-        // function addLayerLabels() {
+        function addLayerLabels() {
+            const layerGap = svgWidth / (layerDims.length + 2);
+
+            // Input layer label
+            svg.appendChild(createLatexLabel(layerGap, svgHeight - 20, '\\mathbf{x}', LATEX_COLOR, "x"));
+            // Hidden layer labels
+            for (let i = 1; i < layerDims.length - 1; i++) {
+                svg.appendChild(createLatexLabel((i + 1) * layerGap, svgHeight - 20, `\\mathbf{x}:=\\phi(\\mathbf{W}_{${i}}\\mathbf{x})`, LATEX_COLOR, "fc" + i));
+            }
+            // Output layer label
+            svg.appendChild(createLatexLabel(layerDims.length * layerGap, svgHeight - 20, `\\hat{\\mathbf{y}} := \\mathbf{W}_{${layerDims.length - 1}}\\mathbf{x}`, LATEX_COLOR, "y_hat"));
+            // True values label
+            svg.appendChild(createLatexLabel((layerDims.length + 1) * layerGap, svgHeight - 20, '\\mathbf{y}', LATEX_COLOR, "y"));
+            // Weight labels
+            for (let i = 1; i < layerDims.length; i++) {
+                svg.appendChild(createLatexLabel(i * layerGap + layerGap / 2, 20, `\\mathbf{W}_{${i}}`, LATEX_COLOR, "W" + i));
+            }
+        }
 
 
         function addLossLabel() {
-            const lastLayerX = (layers.length + 1) * (svgWidth / (layers.length + 2));
+            const lastLayerX = (layerDims.length + 1) * (svgWidth / (layerDims.length + 2));
             const braceWidth = 15;
-            svg.appendChild(createLatexLabel(lastLayerX + braceWidth * 1.5 + 80, svgHeight / 2, 'L(\\hat{\\mathbf{y}}, \\mathbf{y})', LATEX_COLOR_LOSS));
+            svg.appendChild(createLatexLabel(lastLayerX + braceWidth * 1.5 + 80, svgHeight / 2, 'L(\\hat{\\mathbf{y}}, \\mathbf{y})', LATEX_COLOR_LOSS, "loss"));
         }
 
 
@@ -1456,7 +1657,6 @@
         document.getElementById('btn-edit-dims').addEventListener('mouseover', showInfo);
         document.getElementById('btn-edit-dims').addEventListener('mouseout', clearInfo);
 
-        // drawNetwork();
         window.onload = function () {
             document.getElementById('layerDimInput').value = initialHidden;
             resetData();
